@@ -1,0 +1,1584 @@
+CREATE OR REPLACE PACKAGE BODY APPS.xxul_bnp_process_order_pkg
+AS
+   g_debug_msg         applsys.fnd_profile_option_values.profile_option_value%TYPE;
+   g_debugfilehandle   UTL_FILE.file_type;
+
+ 
+
+   PROCEDURE write_log (i_msgdata VARCHAR2)
+   IS
+   BEGIN
+      IF i_msgdata = 'newline'
+      THEN
+         --   fnd_file.new_line (fnd_file.LOG, 1);
+         --DBMS_OUTPUT.new_line ();
+         -- Commented by Aditya 08-JAN-13
+         --   IF g_debug_msg <> '0' THEN
+         -- Added is_open check on 17-Jan-2013
+         IF UTL_FILE.is_open (g_debugfilehandle)
+         THEN
+            UTL_FILE.new_line (g_debugfilehandle, 1);
+         END IF;
+      --  END IF;
+      ELSE
+         --   fnd_file.put_line (fnd_file.LOG, i_msgdata);
+         --DBMS_OUTPUT.put_line (i_msgdata);
+
+         --   IF g_debug_msg <> '0' THEN
+         IF UTL_FILE.is_open (g_debugfilehandle)
+         THEN
+            --DBMS_OUTPUT.put_line (i_msgdata);
+            UTL_FILE.put_line (g_debugfilehandle, i_msgdata);
+         END IF;
+      --   END IF;
+      END IF;
+   EXCEPTION
+      WHEN UTL_FILE.invalid_path
+      THEN
+         --  DBMS_OUTPUT.put_line ('ERROR: 20100 -- Invalid Path');
+         RAISE;
+      WHEN UTL_FILE.invalid_mode
+      THEN
+         --DBMS_OUTPUT.put_line ('ERROR: 20101 -- Invalid Mode');
+         RAISE;
+      WHEN UTL_FILE.invalid_operation
+      THEN
+         --DBMS_OUTPUT.put_line ('ERROR: 20102 -- Invalid Operation');
+         RAISE;
+      WHEN UTL_FILE.invalid_filehandle
+      THEN
+         --DBMS_OUTPUT.put_line ('ERROR: 20103 -- Invalid Filehandle');
+         RAISE;
+      WHEN UTL_FILE.write_error
+      THEN
+         --DBMS_OUTPUT.put_line ('ERROR: 20104 -- Write Error');
+         RAISE;
+      WHEN UTL_FILE.read_error
+      THEN
+         --DBMS_OUTPUT.put_line ('ERROR: 20105 -- Read Error');
+         RAISE;
+      WHEN UTL_FILE.internal_error
+      THEN
+         --DBMS_OUTPUT.put_line ('ERROR: 20106 -- Internal Error');
+         RAISE;
+      WHEN OTHERS
+      THEN
+         RAISE;
+   --  retcode := 1;
+   /*  DBMS_OUTPUT.put_line
+            (   'Unexpected error while creating UTL File. Error - '
+             || SQLERRM
+             || CHR (10)
+            ); */
+   END write_log;
+
+   PROCEDURE logging_close
+   IS
+   BEGIN
+      IF UTL_FILE.is_open (g_debugfilehandle)
+      THEN
+         UTL_FILE.fclose (g_debugfilehandle);
+      --  dbms_output.put_line ('File is successfully closed on call from UTILS package');
+      END IF;
+   END logging_close;
+
+   PROCEDURE init_logging (
+      p_logfile_name   IN              VARCHAR2,
+     -- o_err_data_tbl   OUT NOCOPY      xxul_error_msg_tbl,
+      o_return_code    OUT NOCOPY      NUMBER
+   )
+   IS
+      lv_file_dir    VARCHAR2 (100) := '/usr/tmp';
+      lv_file_name   VARCHAR2 (100) := p_logfile_name;
+   BEGIN
+      o_return_code := 0;
+
+      --   g_debug_msg := apps.fnd_profile.VALUE ('XXUL_LW_INTF_DEBUG'); No needed here
+
+      -- Get the first UTL_FILE path set in the system
+      SELECT SUBSTR (VALUE,
+                     1,
+                     DECODE (INSTR (VALUE, ','),
+                             0, LENGTH (VALUE),
+                             INSTR (VALUE, ',') - 1
+                            )
+                    )
+        INTO lv_file_dir
+        FROM v$parameter
+       WHERE NAME = 'utl_file_dir';
+
+      IF NOT UTL_FILE.is_open (g_debugfilehandle)
+      THEN
+         g_debugfilehandle :=
+                       UTL_FILE.fopen (lv_file_dir, lv_file_name, 'W', 32767);
+      END IF;
+   EXCEPTION
+      WHEN UTL_FILE.invalid_path
+      THEN
+         logging_close ();
+         g_debug_msg := '0';
+
+         IF UTL_FILE.is_open (g_debugfilehandle)
+         THEN
+           -- populate_ret_msg
+           --                 ('INIT_INVD_PATH',
+           --                  'Unable to find UTL_FILE_DIR for this instance',
+           --                  0,
+           ----                  o_err_data_tbl
+            --                );
+            NULL;
+         END IF;
+
+         o_return_code := 1;
+      WHEN UTL_FILE.invalid_mode
+      THEN
+         logging_close ();
+         g_debug_msg := '0';
+
+         IF UTL_FILE.is_open (g_debugfilehandle)
+         THEN
+          /*  populate_ret_msg ('INIT_INVD_MODE',
+                              'Invalid file mode for debug file.',
+                              0,
+                              o_err_data_tbl
+                             );*/
+                             NULL;
+         END IF;
+
+         o_return_code := 1;
+      WHEN NO_DATA_FOUND
+      THEN
+         g_debug_msg := '0';
+
+         IF UTL_FILE.is_open (g_debugfilehandle)
+         THEN
+           /* populate_ret_msg
+                            ('NO_FILE_DIR',
+                             'Unable to find UTL_FILE_DIR for this instance',
+                             0,
+                             o_err_data_tbl
+                            );*/
+                            NULL;
+         END IF;
+
+         o_return_code := 1;
+      WHEN OTHERS
+      THEN
+         g_debug_msg := '0';
+
+         IF UTL_FILE.is_open (g_debugfilehandle)
+         THEN
+            --populate_ret_msg ('INVALID_FILE_DIR', SQLERRM, 0, o_err_data_tbl);
+            NULL;
+         END IF;
+
+         o_return_code := 1;
+   END;
+
+   PROCEDURE xxul_attachment_header (
+      p_user_id      IN   NUMBER,
+      p_header_rec   IN   xxul_order_hdrs_obj,
+      p_header_id    IN   NUMBER
+   )
+   IS
+      lv_pk1_value           fnd_attached_documents.pk1_value%TYPE   := NULL;
+      ln_category_id1        NUMBER;
+      ln_category_id2        NUMBER;
+      lv_seq_num             NUMBER;
+      lv_short_datatype_id   NUMBER;
+      lv_entity_name         VARCHAR2 (100)             := 'OE_ORDER_HEADERS';
+      ---TBD with Abhi
+      lv_category_name1      VARCHAR2 (100)          := 'UL Fulfilment Notes';
+      lv_category_name2      VARCHAR2 (100)
+                                 := 'UL Quote/Order/Invoice Notes (External)';
+      ln_user_id             NUMBER;
+      lv_error_msg           VARCHAR2 (4000);
+      lv_error_type          VARCHAR2 (4000);
+      ln_error_code          NUMBER;
+      lv_process_flag        VARCHAR2 (100);
+   --ln_itr2                NUMBER;
+      PRAGMA AUTONOMOUS_TRANSACTION;
+   BEGIN
+      SELECT category_id
+        INTO ln_category_id1
+        FROM apps.fnd_document_categories_vl
+       WHERE user_name = lv_category_name1 AND ROWNUM = 1;
+
+      SELECT category_id
+        INTO ln_category_id2
+        FROM apps.fnd_document_categories_vl
+       WHERE user_name = lv_category_name2 AND ROWNUM = 1;
+
+      -- Get Data type id for Short Text types of attachments
+      SELECT datatype_id
+        INTO lv_short_datatype_id
+        FROM apps.fnd_document_datatypes
+       WHERE NAME = 'SHORT_TEXT' AND LANGUAGE = 'US';
+
+      lv_pk1_value := p_header_id;
+      lv_seq_num := NULL;
+      lv_error_msg := NULL;
+      ln_error_code := 0;
+      lv_error_type := NULL;
+
+      -- Create attachment for type 'UL Fulfilment Notes'
+      IF p_header_rec.attach_user_id IS NOT NULL
+      THEN
+         BEGIN
+            SELECT NVL (MAX (seq_num), 0) + 10
+              INTO lv_seq_num
+              FROM fnd_attached_documents
+             WHERE pk1_value = lv_pk1_value AND entity_name = lv_entity_name;
+
+            fnd_webattch.add_attachment
+                               (seq_num                   => lv_seq_num,
+                                category_id               => ln_category_id1,
+                                document_description      => 'LabWare Engineer ID',
+                                datatype_id               => lv_short_datatype_id,
+                                text                      => p_header_rec.attach_user_id,
+                                file_name                 => NULL,
+                                url                       => NULL,
+                                function_name             => NULL,
+                                entity_name               => lv_entity_name,
+                                pk1_value                 => lv_pk1_value,
+                                pk2_value                 => NULL,
+                                pk3_value                 => NULL,
+                                pk4_value                 => NULL,
+                                pk5_value                 => NULL,
+                                media_id                  => NULL,
+                                user_id                   => p_user_id
+                               );
+         EXCEPTION
+            WHEN OTHERS
+            THEN
+               lv_error_type := 'Attachment issue';
+               lv_process_flag := 'E';
+               lv_error_msg :=
+                     'Error occured while uploading the attachments for Order  '
+                  || SQLERRM;
+         END;
+      END IF;
+
+      -- Create attachment for type 'UL Quote/Order/Invoice Notes'
+      IF p_header_rec.attach_qoi_notes IS NOT NULL
+      THEN
+         BEGIN
+            SELECT NVL (MAX (seq_num), 0) + 10
+              INTO lv_seq_num
+              FROM fnd_attached_documents
+             WHERE pk1_value = lv_pk1_value AND entity_name = lv_entity_name;
+
+            fnd_webattch.add_attachment
+                                     (seq_num                   => lv_seq_num,
+                                      category_id               => ln_category_id2,
+                                      document_description      => 'LabWare Notes',
+                                      datatype_id               => lv_short_datatype_id,
+                                      text                      => p_header_rec.attach_qoi_notes,
+                                      file_name                 => NULL,
+                                      url                       => NULL,
+                                      function_name             => NULL,
+                                      entity_name               => lv_entity_name,
+                                      pk1_value                 => lv_pk1_value,
+                                      pk2_value                 => NULL,
+                                      pk3_value                 => NULL,
+                                      pk4_value                 => NULL,
+                                      pk5_value                 => NULL,
+                                      media_id                  => NULL,
+                                      user_id                   => p_user_id
+                                     );
+         EXCEPTION
+            WHEN OTHERS
+            THEN
+               lv_error_type := 'Attachment issue';
+               lv_process_flag := 'E';
+               lv_error_msg :=
+                     'Error occured while uploading the attachments for Order  '
+                  || SQLERRM;
+         END;
+      END IF;
+   END xxul_attachment_header;
+
+   PROCEDURE xxul_attachment_lines (
+      p_user_id     IN   NUMBER,
+      p_line_tbl    IN   xxul_order_line_tbl_type,
+      p_line_id IN  NUMBER,
+      p_line_number IN NUMBER 
+   )
+   IS
+      lv_pk1_value           fnd_attached_documents.pk1_value%TYPE   := NULL;
+      ln_category_id1        NUMBER;
+      ln_category_id2        NUMBER;
+      l_cntl                 NUMBER;
+      ln_line_id             NUMBER;
+      lv_seq_num             NUMBER;
+      lv_short_datatype_id   NUMBER;
+      lv_entity_name         VARCHAR2 (100)               := 'OE_ORDER_LINES';
+      ---TBD with Abhi
+      lv_category_name1      VARCHAR2 (100)
+                                       := 'UL Service Description (External)';
+      lv_category_name2      VARCHAR2 (100)
+                                 := 'UL Quote/Order/Invoice Notes (External)';
+      ln_user_id             NUMBER;
+      lv_error_msg           VARCHAR2 (4000);
+      lv_error_type          VARCHAR2 (4000);
+      ln_error_code          NUMBER;
+      lv_process_flag        VARCHAR2 (100);
+      l_cnt                  NUMBER;
+      l_attach_service_desc VARCHAR2(4000);
+      l_attach_notes        VARCHAR2(4000);
+      
+      PRAGMA AUTONOMOUS_TRANSACTION;
+
+       
+       
+      
+   BEGIN
+      SELECT category_id
+        INTO ln_category_id1
+        FROM apps.fnd_document_categories_vl
+       WHERE user_name = lv_category_name1 AND ROWNUM = 1;
+
+      SELECT category_id
+        INTO ln_category_id2
+        FROM apps.fnd_document_categories_vl
+       WHERE user_name = lv_category_name2 AND ROWNUM = 1;
+
+
+
+      -- Get Data type id for Short Text types of attachments
+      SELECT datatype_id
+        INTO lv_short_datatype_id
+        FROM apps.fnd_document_datatypes
+       WHERE NAME = 'SHORT_TEXT' AND LANGUAGE = 'US';
+       
+       
+       
+              SELECT inp.attach_service_desc, inp.attach_notes
+              INTO l_attach_service_desc, l_attach_notes
+           FROM TABLE( p_line_tbl) inp
+          WHERE inp.line_number = p_line_number;
+
+
+         lv_pk1_value := p_line_id;                   --line id of every line
+
+
+         --Service Descripton Attachment
+         IF l_attach_service_desc IS NOT NULL
+         THEN
+            BEGIN
+               lv_seq_num := NULL;
+               lv_error_msg := NULL;
+               ln_error_code := 0;
+               lv_error_type := NULL;
+
+               SELECT NVL (MAX (seq_num), 0) + 10
+                 INTO lv_seq_num
+                 FROM fnd_attached_documents
+                WHERE pk1_value = lv_pk1_value
+                      AND entity_name = lv_entity_name;
+
+               fnd_webattch.add_attachment
+                       (seq_num                   => lv_seq_num,
+                        category_id               => ln_category_id1,
+                        document_description      => 'Labware Service Description',
+                        datatype_id               => lv_short_datatype_id,
+                        text                      => l_attach_service_desc,
+                        file_name                 => NULL,
+                        url                       => NULL,
+                        function_name             => NULL,
+                        entity_name               => lv_entity_name,
+                        pk1_value                 => lv_pk1_value,
+                        pk2_value                 => NULL,
+                        pk3_value                 => NULL,
+                        pk4_value                 => NULL,
+                        pk5_value                 => NULL,
+                        media_id                  => NULL,
+                        user_id                   => p_user_id
+                       );
+            EXCEPTION
+               WHEN OTHERS
+               THEN
+                  lv_error_type := 'Attachment issue';
+                  lv_process_flag := 'E';
+                  lv_error_msg :=
+                        'Error occured while uploading the attachments for order lines '
+                     || SQLERRM;
+            END;
+         END IF;
+
+         --Additonal Notes
+         IF l_attach_notes IS NOT NULL
+         THEN
+            BEGIN
+               lv_seq_num := NULL;
+               lv_error_msg := NULL;
+               ln_error_code := 0;
+               lv_error_type := NULL;
+
+               SELECT NVL (MAX (seq_num), 0) + 10
+                 INTO lv_seq_num
+                 FROM fnd_attached_documents
+                WHERE pk1_value = lv_pk1_value
+                      AND entity_name = lv_entity_name;
+
+               fnd_webattch.add_attachment
+                                  (seq_num                   => lv_seq_num,
+                                   category_id               => ln_category_id2,
+                                   document_description      => 'Additional Notes',
+                                   datatype_id               => lv_short_datatype_id,
+                                   text                      => l_attach_notes,
+                                   file_name                 => NULL,
+                                   url                       => NULL,
+                                   function_name             => NULL,
+                                   entity_name               => lv_entity_name,
+                                   pk1_value                 => lv_pk1_value,
+                                   pk2_value                 => NULL,
+                                   pk3_value                 => NULL,
+                                   pk4_value                 => NULL,
+                                   pk5_value                 => NULL,
+                                   media_id                  => NULL,
+                                   user_id                   => p_user_id
+                                  );
+            EXCEPTION
+               WHEN OTHERS
+               THEN
+                  lv_error_type := 'Attachment issue';
+                  lv_process_flag := 'E';
+                  lv_error_msg :=
+                        'Error occured while uploading the attachments for order lines '
+                     || SQLERRM;
+            END;
+         END IF;
+
+   END;
+
+   PROCEDURE xxul_call_process_order (
+      p_header_rec       IN       xxul_order_hdrs_obj,
+      p_line_tbl         IN       xxul_order_line_tbl_type,
+      p_header_rec_out   OUT      xxul_header_out,
+      p_line_rec_out     OUT      xxul_order_line_out_tbl_type
+   )
+   AS
+      l_return_status              VARCHAR2 (2000);
+      l_msg_count                  NUMBER;
+      l_msg_data                   VARCHAR2 (2000);
+
+      -- OM DEBUG LEVEL (MAX 5)
+      l_org                        VARCHAR2 (20);
+      -- := '111'; -- OPERATING UNIT
+      l_no_orders                  NUMBER             := 1;
+      -- NO OF ORDERS
+      l_loop_count                 NUMBER;
+      l_user_id                    NUMBER;
+      l_resp_id                    NUMBER;
+      l_resp_appl_id               NUMBER;
+      l_org_id                     NUMBER;
+      l_cust_account_id            NUMBER;
+      ln_sold_to_cust_contact      NUMBER;
+      ln_cust_account_id           NUMBER;
+      ln_party_site_id             NUMBER;
+      ln_ord_date                  VARCHAR2 (20);
+      ln_price_list                NUMBER;
+      ln_currency                  VARCHAR2 (10);
+      ln_ordered_item_id           NUMBER;
+      l_order_number               NUMBER;
+      l_header_id                  NUMBER;
+      l_error_flag                 VARCHAR2 (2);
+      l_line_error_flag            VARCHAR2 (2);
+      l_account_number             NUMBER;
+      l_header_err_msg             VARCHAR2 (4000);
+      l_line_err_msg               VARCHAR2 (4000);
+      --    l_user_id               number;
+      ln_responsibility_id         NUMBER;
+      ln_application_id            NUMBER;
+      l_orig_sys_document_ref      VARCHAR2 (100);
+      e_order_exists               EXCEPTION;
+      ln_order_source_id           NUMBER;
+      ln_source_ref_id             NUMBER;
+      ln_pjt_id                    NUMBER;
+      ln_legal_aggrement_id        NUMBER;
+      ln_line_id                   NUMBER;
+      ln_source_line_ref_id        NUMBER;
+      ln_fullfilment_location_id   NUMBER;
+      l_currency_code              VARCHAR2 (10);
+      lv_item_type                 VARCHAR2 (40);
+      l_order_header_type          VARCHAR2 (100);
+      l_payment_term_id            NUMBER;
+      l_salesrep_id                NUMBER;
+      l_cnt1                       NUMBER;
+      l_line_rec_out               xxul_lines_rec_out;
+      -- l_cust_account_id       number;
+      l_logfile_name               VARCHAR2 (100);
+     -- l_err_data_tbl               xxul_error_msg_tbl;
+      l_return_code                NUMBER;
+      --Added 09/01/2016
+      l_valid_ou_chk               VARCHAR2(1);
+      l_valid_industry             VARCHAR2(1);
+      l_valid_catalog              VARCHAR2(1);
+      
+      
+   BEGIN
+      g_debug_msg := apps.fnd_profile.VALUE ('XXUL_LW_INTF_DEBUG');
+      l_error_flag := 'S';
+      l_line_error_flag := 'S';
+      p_header_rec_out := xxul_header_out (NULL, NULL, NULL, NULL);
+      p_line_rec_out := xxul_order_line_out_tbl_type ();
+      p_line_rec_out.DELETE;
+
+      IF g_debug_msg <> '0'
+      THEN
+         l_logfile_name :=
+               'LW_'
+            || p_header_rec.order_source_reference
+            || '_'
+            || SYSDATE
+            || '.txt';
+         init_logging (l_logfile_name, l_return_code);
+      END IF;
+     
+    IF g_debug_msg <> '0' then
+      write_log ('Sarting header validations');
+      END IF;
+
+      ---Validations start
+      --/****************************Getting Org_id ****************************/
+
+      ---validation for checking duplicate order
+      BEGIN
+         SELECT order_number, header_id
+           INTO l_order_number, l_header_id
+           FROM oe_order_headers_all ooh, oe_order_sources oos
+          WHERE orig_sys_document_ref = p_header_rec.order_source_reference
+            AND ooh.order_source_id = oos.order_source_id
+            AND UPPER (oos.NAME) = UPPER (p_header_rec.order_source);
+      /* Added by Abhi */
+      EXCEPTION
+         WHEN NO_DATA_FOUND
+         THEN
+            l_order_number := '';
+         /* Added by Abhi */
+         WHEN TOO_MANY_ROWS
+         THEN
+            l_order_number := 999999;
+         WHEN OTHERS
+         THEN
+            l_order_number := 999999;
+      END;
+
+      IF l_order_number IS NULL
+      THEN
+         /*---Header level validation start--*/
+
+         --Validate operating Unit
+         IF p_header_rec.operating_unit IS NULL
+         THEN
+            l_error_flag := 'E';
+            l_header_err_msg := 'Operating Unit is null';
+         END IF;
+         
+         --09/01/2016 Validate OU from the OU lookup
+         BEGIN
+         SELECT 1
+           INTO l_valid_ou_chk
+           FROM fnd_lookup_values flv
+          WHERE 1 = 1
+            AND flv.lookup_type = 'XXUL_LW_OU_LIST'
+            AND flv.LANGUAGE = 'US'
+            AND flv.meaning = p_header_rec.operating_unit
+            AND flv.enabled_flag = 'Y';
+         EXCEPTION
+            WHEN NO_DATA_FOUND THEN
+            l_error_flag := 'E';
+            l_header_err_msg := 'Operating Unit is incorrect or inactive for Labware integration';
+         END;   
+
+         --Validation for Date Ordered
+         IF p_header_rec.ordered_date IS NULL
+         THEN
+            l_error_flag := 'E';
+            l_header_err_msg :=
+                             l_header_err_msg || ', ' || 'Order Date is null';
+         END IF;
+
+         --Validation for sold to cust account
+         IF p_header_rec.sold_to_cust_account IS NULL
+         THEN
+            l_error_flag := 'E';
+            l_header_err_msg :=
+                   l_header_err_msg || ', ' || 'Sold to Cust account is null';
+         END IF;
+
+         --Validation for pricelist
+         IF p_header_rec.pricelist IS NULL
+         THEN
+            l_error_flag := 'E';
+            l_header_err_msg :=
+                              l_header_err_msg || ', ' || 'Pricelist is null';
+         END IF;
+
+         --Validation for currency
+         IF p_header_rec.currency IS NULL
+         THEN
+            l_error_flag := 'E';
+            l_header_err_msg :=
+                          l_header_err_msg || ', ' || 'Currency Code is null';
+         END IF;
+
+         --Valdation for order source
+         IF UPPER (p_header_rec.order_source) <> 'AURORA LABWARE'
+         THEN
+            l_error_flag := 'E';
+            l_header_err_msg :=
+                           l_header_err_msg || ', ' || 'Invalid Order Source';
+         END IF;
+
+         --Validation for order source reference
+         IF p_header_rec.order_source_reference IS NULL
+         THEN
+            l_error_flag := 'E';
+            l_header_err_msg :=
+                 l_header_err_msg || ', ' || 'Order Source Reference is null';
+         END IF;
+
+         --Validation for cust project name
+         IF p_header_rec.cust_project_name IS NULL
+         THEN
+            l_error_flag := 'E';
+            l_header_err_msg :=
+                  l_header_err_msg || ', ' || 'Customer Project Name is null';
+         END IF;
+
+         --Validation for agreement details
+         IF p_header_rec.agreement_details IS NULL
+         THEN
+            l_error_flag := 'E';
+            l_header_err_msg :=
+                      l_header_err_msg || ', ' || 'Agreement Details is null';
+         END IF;
+
+         IF g_debug_msg <> '0'
+         THEN
+            write_log (   'Header level error messages <if any>: '
+                       || l_header_err_msg
+                      );
+         END IF;
+        
+        IF g_debug_msg <> '0' then
+        write_log ('Header Validations completed');
+        
+                    write_log('newline');
+         /*---Header level validation end--*/
+         write_log ('Sarting line validations');
+         end if;
+
+         /*---Line level validation start--*/
+         FOR l_cnt1 IN 1 .. p_line_tbl.LAST
+         LOOP
+            l_line_err_msg := '';
+            p_line_rec_out.EXTEND;
+            p_line_rec_out (l_cnt1) :=
+                                  xxul_lines_rec_out (NULL, NULL, NULL, NULL);
+
+            --Reset the variable to capture error msg for every line
+
+            -- Validation for line number
+            IF p_line_tbl (l_cnt1).line_number IS NULL
+            THEN
+               l_line_error_flag := 'E';
+               l_line_err_msg := 'Line number is null';
+            END IF;
+
+            --Validation for order source
+            IF UPPER (p_line_tbl (l_cnt1).order_source) <> 'AURORA LABWARE'
+            THEN
+               l_line_error_flag := 'E';
+               l_line_err_msg :=
+                              l_line_err_msg || ',' || 'Invalid order source';
+            END IF;
+
+            --Validation for order source line reference
+            IF p_line_tbl (l_cnt1).order_source_line_reference IS NULL
+            THEN
+               l_line_error_flag := 'E';
+               l_line_err_msg :=
+                     l_line_err_msg
+                  || ','
+                  || 'Order source line reference is null';
+            END IF;
+
+            -- Validaiton for fulfillment location
+            IF p_line_tbl (l_cnt1).fulfillment_location IS NULL
+            THEN
+               l_line_error_flag := 'E';
+               l_line_err_msg :=
+                  l_line_err_msg || ','
+                  || 'Order fulfillment location is null';
+            END IF;
+
+            --Validation for billable service
+            IF p_line_tbl (l_cnt1).ordered_item IS NULL
+            THEN
+               l_line_error_flag := 'E';
+               l_line_err_msg :=
+                              l_line_err_msg || ',' || 'Ordered Item is null';
+            ELSE
+               BEGIN
+                  SELECT item_type
+                    INTO lv_item_type
+                    FROM mtl_system_items_b
+                   WHERE 1 = 1
+                     AND segment1 = p_line_tbl (l_cnt1).ordered_item
+                     AND organization_id = 133
+                     AND inventory_item_status_code='Active'; --Added on 09/01/2016
+               EXCEPTION
+                  WHEN NO_DATA_FOUND
+                  THEN
+                     lv_item_type := '';
+                     l_line_error_flag := 'E';
+                     l_line_err_msg :=
+                           l_line_err_msg
+                        || ','
+                        || 'Ordered Item number is incorrect or inactive';
+                  WHEN OTHERS
+                  THEN
+                     lv_item_type := '';
+                     l_line_error_flag := 'E';
+                     l_line_err_msg :=
+                           l_line_err_msg
+                        || ','
+                        || 'Ordered Item number is incorrect';
+               END;
+            END IF;
+
+            --Conditional Mandatory check for pricing attributes
+            IF     NVL (lv_item_type, 'UL ST') <> 'UL ST'
+               AND (   p_line_tbl (l_cnt1).top_item_number IS NULL
+                    OR p_line_tbl (l_cnt1).industry_item IS NULL
+                   )
+            THEN
+               l_line_error_flag := 'E';
+               l_line_err_msg :=
+                     l_line_err_msg
+                  || ','
+                  || 'Missing Top item or Industry item information needed pricing information';
+                  
+            --09/01/2016 Validate for active catalog list and catalog specific industry value  
+            ELSIF NVL (lv_item_type, 'UL ST') <> 'UL ST'
+                    AND (   p_line_tbl (l_cnt1).top_item_number IS NOT NULL
+                    OR p_line_tbl (l_cnt1).industry_item IS NOT NULL
+                   )
+            THEN
+                 --Validate catalog list
+            BEGIN     
+                    SELECT 1
+                 INTO   l_valid_catalog
+            FROM fnd_lookup_values
+           WHERE 1 = 1
+             AND lookup_type LIKE 'XXUL_LW_CATALOG_LIST'
+             AND LANGUAGE = 'US'
+             AND lookup_code =p_line_tbl (l_cnt1).top_item_number
+             AND enabled_flag ='Y'
+             AND nvl(end_date_active, sysdate+1) > sysdate;  
+             
+            EXCEPTION
+                WHEN NO_DATA_FOUND THEN
+                l_line_error_flag := 'E';
+               l_line_err_msg :=
+                     l_line_err_msg
+                  || ','
+                  || 'Invalid top model item number';
+            END;      
+                  
+            --Validate industry value
+            BEGIN
+              SELECT 1
+                INTO l_valid_industry  
+               FROM dual
+               Where 1 =1 and p_line_tbl (l_cnt1).industry_item IN (SELECT msib2.segment1
+FROM bom.bom_components_b bic,bom.bom_structures_b bom,inv.mtl_system_items_b msib,inv.mtl_system_items_b msib2
+WHERE 1 = 1
+                 AND bic.bill_sequence_id = bom.bill_sequence_id
+                 AND NVL (bic.disable_date, SYSDATE) >= SYSDATE
+                 AND bom.assembly_item_id = msib.inventory_item_id
+                 AND bom.organization_id = msib.organization_id
+                 AND bic.component_item_id = msib2.inventory_item_id
+                 AND bom.organization_id = msib2.organization_id
+                 AND msib.organization_id = 133
+                 AND msib2.item_type IN
+                        ('UL IND', 'UL IND CAT', 'UL IND SUBCAT',
+                         'UL PROD GP', 'UL PROD TP')
+                 AND msib2.inventory_item_status_code =
+                                                      'Active' 
+                 AND bom.alternate_bom_designator IS NULL
+          START WITH msib.segment1 = p_line_tbl (l_cnt1).top_item_number
+          CONNECT BY NOCYCLE PRIOR bic.component_item_id =
+                                                        msib.inventory_item_id
+                 AND NVL (bic.disable_date, SYSDATE) >= SYSDATE);
+            
+            EXCEPTION
+            WHEN NO_DATA_FOUND THEN
+             l_line_error_flag := 'E';
+               l_line_err_msg :=
+                     l_line_err_msg
+                  || ','
+                  || 'Invalid industry item for the catalog';                      
+            END;      
+                  
+            END IF;
+
+            --Validate the qty
+            IF NVL (p_line_tbl (l_cnt1).ordered_quantity, 0) = 0
+            THEN
+               l_line_error_flag := 'E';
+               l_line_err_msg :=
+                     l_line_err_msg || ',' || 'Ordered Quantity is null or 0';
+            END IF;
+
+            p_line_rec_out (l_cnt1).line_number :=
+                                               p_line_tbl (l_cnt1).line_number;
+            p_line_rec_out (l_cnt1).line_identifier :=
+                               p_line_tbl (l_cnt1).order_source_line_reference;
+            p_line_rec_out (l_cnt1).line_err_msg := l_line_err_msg;
+            
+            IF g_debug_msg <> '0' then
+            write_log
+                            (   'Line level error messages (if any) for line '
+                             || (l_cnt1)
+                             || ' : '
+                             || l_line_err_msg
+                            );
+            
+            
+            end if;
+         END LOOP;
+        
+        IF g_debug_msg <> '0' then
+         write_log ('Line Validations completed');
+         
+                     write_log('newline');
+         end if;
+      ELSE                             -- Order is a duplicate order in Oracle
+         l_error_flag := 'E';
+         l_header_err_msg :=
+                      'An order exists in Oracle for this Labware identifier';
+           IF g_debug_msg <> '0' then            
+         write_log (l_header_err_msg);
+         end if;
+         RAISE e_order_exists;                               -- Added by Abhi
+      END IF;
+
+       IF g_debug_msg <> '0' then  
+      write_log (   'Header Error Flag: '
+                            || l_error_flag
+                            || ' Line Error Flag: '
+                            || l_line_error_flag
+                           );
+                           end if;
+
+      --Validations end
+      IF l_error_flag = 'S' AND l_line_error_flag = 'S'
+      THEN
+         -- Call process order procedure
+         IF g_debug_msg <> '0' then  
+         write_log('newline');
+         write_log
+                       ('Calling process order prceodure xxul_bnp_process_order');
+                       end if;
+         xxul_bnp_process_order (p_header_rec,
+                                 p_line_tbl,
+                                 p_header_rec_out,
+                                 p_line_rec_out
+                                );
+           IF g_debug_msg <> '0' then                       
+         write_log ('Order processing completed');
+         end if;
+      ELSE
+         --Incase of validation failures then create the header record as the package output. --Added by Abhi
+         p_header_rec_out.error_msg := l_header_err_msg;
+         p_header_rec_out.order_number := l_order_number;
+         p_header_rec_out.source_ref := p_header_rec.order_source_reference;
+         p_header_rec_out.msg_ack := 'Order Validation Failed';
+            
+               
+         
+         IF g_debug_msg <> '0' then  
+         write_log
+               ('Order has validation errors so no further processing needed');
+               end if;
+      END IF;                                       ---l_err_flag if condition
+      
+      
+      logging_close;
+   EXCEPTION
+      --Added by Abhi
+      WHEN e_order_exists
+      THEN
+         p_header_rec_out.order_number := l_order_number;
+         p_header_rec_out.source_ref := p_header_rec.order_source_reference;
+         p_header_rec_out.msg_ack := 'Order Creation Failed';
+         p_header_rec_out.error_msg := l_header_err_msg;
+         
+         FOR l_cnt1 IN 1 .. p_line_tbl.LAST
+         LOOP
+            l_line_err_msg := '';
+            p_line_rec_out.EXTEND;
+            p_line_rec_out (l_cnt1) :=
+                                  xxul_lines_rec_out (NULL, NULL, NULL, NULL);
+            
+                        p_line_rec_out (l_cnt1).line_number :=
+                                               p_line_tbl (l_cnt1).line_number;
+            p_line_rec_out (l_cnt1).line_identifier :=
+                               p_line_tbl (l_cnt1).order_source_line_reference;
+
+                                  
+         END LOOP;
+         
+         
+         logging_close;
+      --Added by Abhi
+      WHEN OTHERS
+      THEN
+      IF g_debug_msg <> '0' then  
+         write_log ('error Message' || SQLERRM);
+         end if;
+         logging_close;
+   END;
+
+   PROCEDURE xxul_bnp_process_order (
+      p_header_rec       IN       xxul_order_hdrs_obj,
+      p_line_tbl         IN       xxul_order_line_tbl_type,
+      p_header_rec_out   OUT      xxul_header_out,
+      p_line_rec_out     OUT      xxul_order_line_out_tbl_type
+   )
+   AS
+      l_org_id                       NUMBER;
+      l_error_flag                   VARCHAR2 (40)                     := 'S';
+      l_header_err_msg               VARCHAR2 (4000);
+      l_line_error_flag              VARCHAR2 (40)                     := 'S';
+      l_line_err_msg                 VARCHAR2 (4000);
+      l_debug_file                   VARCHAR2 (200);
+      l_user_id                      NUMBER;
+      ln_responsibility_id           NUMBER;
+      ln_application_id              NUMBER;
+      l_cnt1                         NUMBER;
+
+      -- INPUT VARIABLES FOR PROCESS_ORDER API
+      l_header_rec                   oe_order_pub.header_rec_type;
+      l_line_tbl                     oe_order_pub.line_tbl_type;
+      l_action_request_tbl           oe_order_pub.request_tbl_type;
+      l_line_price_att_tbl           oe_order_pub.line_price_att_tbl_type;
+      -- OUT VARIABLES FOR PROCESS_ORDER API
+      l_header_rec_out               oe_order_pub.header_rec_type;
+      l_header_val_rec_out           oe_order_pub.header_val_rec_type;
+      l_header_adj_tbl_out           oe_order_pub.header_adj_tbl_type;
+      l_header_adj_val_tbl_out       oe_order_pub.header_adj_val_tbl_type;
+      l_header_price_att_tbl_out     oe_order_pub.header_price_att_tbl_type;
+      l_header_adj_att_tbl_out       oe_order_pub.header_adj_att_tbl_type;
+      l_header_adj_assoc_tbl_out     oe_order_pub.header_adj_assoc_tbl_type;
+      l_header_scredit_tbl_out       oe_order_pub.header_scredit_tbl_type;
+      l_header_scredit_val_tbl_out   oe_order_pub.header_scredit_val_tbl_type;
+      l_line_tbl_out                 oe_order_pub.line_tbl_type;
+      l_line_val_tbl_out             oe_order_pub.line_val_tbl_type;
+      l_line_adj_tbl_out             oe_order_pub.line_adj_tbl_type;
+      l_line_adj_val_tbl_out         oe_order_pub.line_adj_val_tbl_type;
+      l_line_price_att_tbl_out       oe_order_pub.line_price_att_tbl_type;
+      l_line_adj_att_tbl_out         oe_order_pub.line_adj_att_tbl_type;
+      l_line_adj_assoc_tbl_out       oe_order_pub.line_adj_assoc_tbl_type;
+      l_line_scredit_tbl_out         oe_order_pub.line_scredit_tbl_type;
+      l_line_scredit_val_tbl_out     oe_order_pub.line_scredit_val_tbl_type;
+      l_lot_serial_tbl_out           oe_order_pub.lot_serial_tbl_type;
+      l_lot_serial_val_tbl_out       oe_order_pub.lot_serial_val_tbl_type;
+      l_action_request_tbl_out       oe_order_pub.request_tbl_type;
+      l_msg_count                    NUMBER;
+      l_msg_data                     VARCHAR2 (2000);
+      l_msg_index                    NUMBER;
+      l_orig_sys_document_ref        NUMBER;
+      l_return_status                VARCHAR2 (10);
+      l_header_id                    NUMBER;
+      e_custom_exception             EXCEPTION;
+      l_line_rec_out                 xxul_lines_rec_out;
+      x_msg_data                     VARCHAR2 (2000);
+      l_sold_to_cust_id              NUMBER;
+    --  l_err_data_tbl                 xxul_error_msg_tbl;
+      l_return_code                  NUMBER;
+      l_prj_name                     VARCHAR2 (1000);
+      l_item_type                    VARCHAR2 (40);
+      l_context_flag                 VARCHAR2(10);
+   BEGIN
+      --g_debug_msg:= apps.fnd_profile.VALUE ('XXUL_LW_INTF_DEBUG');
+      p_header_rec_out := xxul_header_out (NULL, NULL, NULL, NULL);
+      p_line_rec_out := xxul_order_line_out_tbl_type ();
+      p_line_rec_out.EXTEND;
+      p_line_rec_out (1) := xxul_lines_rec_out (NULL, NULL, NULL, NULL);
+
+      --fetching the org id
+      BEGIN
+         SELECT organization_id
+           INTO l_org_id
+           FROM hr_operating_units
+          WHERE NAME = p_header_rec.operating_unit;
+      EXCEPTION
+         WHEN OTHERS
+         THEN
+            l_error_flag := 'E';
+            l_header_err_msg := 'Operating unit does not exist';
+            RAISE e_custom_exception;
+      END;
+
+
+       -- Commented this on 09/12/2016 as moved the environment setups to DVM 
+       --Bug No. 44958
+      
+      BEGIN
+         SELECT usr.user_id
+            INTO l_user_id
+           FROM applsys.fnd_user usr
+          WHERE usr.user_name = 'SOAINTG';
+      EXCEPTION
+         WHEN OTHERS
+         THEN
+            l_error_flag := 'E';
+            l_header_err_msg :=
+                         'Error in fetching the user info for order creation';
+            RAISE e_custom_exception;
+      END;
+       
+      IF g_debug_msg <> '0' then                        
+      write_log ('Apps Initialization started');
+      end if;
+      --INITIALIZE ENVIRONMENT 
+      --(commented on 09/19/2016 as per the SIT testing, SOA using DVM to initialize the environment variables)
+      /*
+      BEGIN
+      fnd_global.apps_initialize (l_user_id,
+                                  ln_responsibility_id,
+                                  ln_application_id
+                                 );
+         IF g_debug_msg <> '0' then                        
+      write_log ('Apps Initialization complete');
+      end if;
+      
+             IF g_debug_msg <> '0' then 
+      write_log ('Setting Policy Context');
+      end if;
+      -- INITIALIZATION REQUIRED FOR R12
+      mo_global.set_policy_context ('S', l_org_id);
+      --  oe_msg_pub.initialize;
+      mo_global.init ('ONT');
+      EXCEPTION
+      WHEN OTHERS THEN
+            NULL;
+      END;
+      */
+
+      -- INITIALIZE HEADER RECORD
+      l_header_rec := oe_order_pub.g_miss_header_rec;
+      -- POPULATE REQUIRED ATTRIBUTES
+      l_header_rec.operation := oe_globals.g_opr_create;
+      -- INITIALIZE ACTION REQUEST RECORD
+      l_action_request_tbl (1) := oe_order_pub.g_miss_request_rec;
+      IF g_debug_msg <> '0' then
+      write_log ('Starting header derivations');
+      end if;
+
+      /*-- Put the header field derivations here --*/
+      --Add as part of bug 44959
+      p_header_rec_out.source_ref := p_header_rec.order_source_reference;
+      
+      -- Derive the org id for operating unit (l_header_rec.sold_from_org_id)
+      BEGIN
+         SELECT organization_id
+           INTO l_header_rec.sold_from_org_id
+           FROM hr_operating_units
+          WHERE NAME = p_header_rec.operating_unit;
+      EXCEPTION
+         WHEN OTHERS
+         THEN
+            l_error_flag := 'E';
+            l_header_err_msg := 'Operating unit does not exist';
+      END;
+
+      --Assign ordered date (l_header_rec.ordered_date)
+      l_header_rec.ordered_date := p_header_rec.ordered_date;
+
+      --Derive sold_to contact_id
+--      begin
+--      select party_id
+--      into l_sold_to_cust_id
+--      from hz_parties
+--      where party_name=p_header_rec.sold_to_cust_name;
+
+      --      Exception
+--      WHEN OTHERS
+--         THEN
+--            l_error_flag := 'E';
+--            l_header_err_msg := 'party_id does not exist';
+--
+--      end;
+--      l_header_rec.sold_to_contact_id:=l_sold_to_cust_id;
+
+      --Derive sold to account id (l_header_rec.sold_to_org_id)
+      BEGIN
+         SELECT cust_account_id
+           INTO l_header_rec.sold_to_org_id
+           FROM hz_cust_accounts
+          WHERE account_number = p_header_rec.sold_to_cust_account
+            AND status = 'A';
+      EXCEPTION
+         WHEN OTHERS
+         THEN
+            l_error_flag := 'E';
+            l_header_err_msg :=
+                      l_header_err_msg || ',' || 'Sold to Account is invalid';
+      END;
+
+      --Derive Pricelist id (l_header_rec.price_list_id)
+      BEGIN
+         SELECT list_header_id
+           INTO l_header_rec.price_list_id
+           FROM qp_list_headers_tl
+          WHERE NAME = p_header_rec.pricelist AND LANGUAGE = 'US';
+      EXCEPTION
+         WHEN OTHERS
+         THEN
+            l_error_flag := 'E';
+            l_header_err_msg :=
+                               l_header_err_msg || ',' || 'Invalid pricelist';
+      END;
+
+      --Assign Transaction currency (l_header_rec.transacitonal_curr_code)
+      l_header_rec.transactional_curr_code := p_header_rec.currency;
+
+      --Derive Order source id (l_header_rec.order_source_id)
+      BEGIN
+         SELECT order_source_id
+           INTO l_header_rec.order_source_id
+           FROM oe_order_sources
+          WHERE UPPER (NAME) = UPPER (p_header_rec.order_source);
+      EXCEPTION
+         WHEN OTHERS
+         THEN
+            l_error_flag := 'E';
+            l_header_err_msg :=
+                            l_header_err_msg || ',' || 'Invalid Order Source';
+      END;
+
+      --Assign order source reference (l_header_rec.orig_sys_document_ref)
+      l_header_rec.orig_sys_document_ref :=
+                                           p_header_rec.order_source_reference;
+      --Assign customer project name (l_header_rec.attribute11)
+      l_header_rec.attribute11 := p_header_rec.cust_project_name;
+      --Assign agreement details (l_header_rec.attribute16)
+      l_header_rec.attribute16 := p_header_rec.agreement_details;
+
+      --Derive Order Type Id for the operating unit(l_header_rec.order_type_id)
+      BEGIN
+         SELECT otl.transaction_type_id
+           INTO l_header_rec.order_type_id
+           FROM oe_transaction_types_all ott, oe_transaction_types_tl otl
+          WHERE 1 = 1
+            AND ott.transaction_type_id = otl.transaction_type_id
+            AND otl.LANGUAGE = 'US'
+            AND ott.transaction_type_code = 'ORDER'
+            AND ott.org_id = l_header_rec.sold_from_org_id
+            AND sales_document_type_code = 'O';
+      EXCEPTION
+         WHEN OTHERS
+         THEN
+            l_error_flag := 'E';
+            l_header_err_msg :=
+                       l_header_err_msg || ',' || 'Error deriving order type';
+      END;
+
+      --Derive Payment Terms Id for the sold to cust account(l_header_rec.payment_term_id)
+      BEGIN
+         SELECT prof.standard_terms
+           INTO l_header_rec.payment_term_id
+           FROM hz_customer_profiles prof, hz_cust_accounts hca
+          WHERE 1 = 1
+            AND prof.party_id = hca.party_id
+            AND hca.cust_account_id = l_header_rec.sold_to_org_id
+            AND prof.site_use_id IS NULL
+            AND prof.status = 'A'
+            AND hca.status = 'A';
+      EXCEPTION
+         WHEN OTHERS
+         THEN
+            l_error_flag := 'E';
+            l_header_err_msg :=
+                  l_header_err_msg || ',' || 'Invalid customer payment terms';
+      END;
+
+      --Assign customer po (l_header_rec.cust_po_number)
+      l_header_rec.cust_po_number := p_header_rec.cust_po;
+      --DEfault Billing Type (l_header_rec.attribute13 ='N')
+      l_header_rec.attribute13 := 'N';
+
+      --Derive Sales person id from p_header_rec.salerep_number(l_header_rec.salesrep_id)
+      IF p_header_rec.salerep_number IS NOT NULL
+      --sales rep is not mandatory
+      THEN
+         BEGIN
+         -- SIT bug fix as the query is picking inactive employess as well
+         /*  Commented for bug fix 44965
+            SELECT   jrs.salesrep_id
+              INTO l_header_rec.salesrep_id
+            FROM apps.jtf_rs_defresources_v jrdv, apps.jtf_rs_salesreps jrs
+           WHERE 1 = 1
+             AND jrs.status = 'A'
+             AND NVL (jrs.end_date_active, TRUNC (SYSDATE + 1)) >
+                                                               TRUNC (SYSDATE)
+             AND jrs.org_id = l_header_rec.sold_from_org_id
+             AND jrs.resource_id = jrdv.resource_id
+             AND jrdv.source_number= p_header_rec.salerep_number;
+             
+             */
+             --Added for Bug fix 44965  
+              SELECT   jrs.salesrep_id
+              INTO l_header_rec.salesrep_id
+              FROM apps.jtf_rs_salesreps jrs, apps.per_all_people_f papf
+             WHERE 1 = 1
+             AND jrs.status = 'A'
+             AND NVL (jrs.end_date_active, TRUNC (SYSDATE + 1)) >
+                                                               TRUNC (SYSDATE)
+             AND jrs.org_id =  l_header_rec.sold_from_org_id
+             AND jrs.person_id = papf.person_id
+             AND papf.current_employee_flag = 'Y'
+             AND papf.effective_end_date > TRUNC (SYSDATE)
+             AND papf.employee_number=p_header_rec.salerep_number;
+              
+         EXCEPTION
+            WHEN OTHERS
+            THEN
+               l_error_flag := 'E';
+               l_header_err_msg :=
+                             l_header_err_msg || ',' || 'Invalid salesperson';
+         END;
+      END IF;
+
+      --Default booked flag (l_header_rec.booked_flag ='N')
+      l_header_rec.booked_flag := 'N';
+      IF g_debug_msg <> '0' then
+      write_log(   'Header derivation complete. Error Flag: '
+                            || l_error_flag
+                            || ' and Error is: '
+                            || l_header_err_msg
+                           );
+      write_log('newline');
+      
+      write_log ('Starting line derivations');
+      end if;
+
+      /*-- Put the line field derivations here --*/
+      --For every line derive and assign the following
+      FOR l_cntl IN 1 .. p_line_tbl.LAST
+      LOOP
+         p_line_rec_out.EXTEND;
+         p_line_rec_out (l_cntl) :=
+                                  xxul_lines_rec_out (NULL, NULL, NULL, NULL);
+
+         l_line_err_msg := '';
+         p_line_rec_out (l_cntl).line_number :=
+                                              p_line_tbl (l_cntl).line_number;
+         p_line_rec_out (l_cntl).line_identifier :=
+                              p_line_tbl (l_cntl).order_source_line_reference;
+         p_line_rec_out (l_cntl).line_err_msg := '';
+
+         -- INITIALIZE LINE RECORD
+
+         l_line_tbl (l_cntl) := oe_order_pub.g_miss_line_rec;
+         l_line_tbl (l_cntl).operation := oe_globals.g_opr_create;
+
+         --Assign line number (l_line_tbl(cntl).line_number)
+         l_line_tbl (l_cntl).line_number := p_line_tbl (l_cntl).line_number;
+
+         --Assign ordered item (l_line_tbl(cntl).invnetory_item_id)
+         BEGIN
+            SELECT inventory_item_id, item_type
+              INTO l_line_tbl (l_cntl).inventory_item_id, l_item_type
+              FROM mtl_system_items_b
+             WHERE 1 = 1
+               AND segment1 = p_line_tbl (l_cntl).ordered_item
+               AND organization_id = 133;
+         EXCEPTION
+            WHEN OTHERS
+            THEN
+               l_line_error_flag := 'E';
+               p_line_rec_out (l_cntl).line_err_msg :=
+                                 'Error in fetching item id for ordered item';
+         END;
+         
+         
+
+         --Assign ordered quantity (l_line_tbl(cntl).ordered_quantity)
+         l_line_tbl (l_cntl).ordered_quantity :=
+                                          p_line_tbl (l_cntl).ordered_quantity;
+         --Default uom (l_line_tbl(cntl).order_quantity_uom ='Ea')
+         l_line_tbl (l_cntl).order_quantity_uom := 'Ea';
+         --Derive order_source id (l_line_tbl(cntl).order_source_id)
+         l_line_tbl (l_cntl).order_source_id := l_header_rec.order_source_id;
+
+         --Assign order source line reference (l_line_tbl(cntl).orig_sys_line_ref )
+         l_line_tbl (l_cntl).orig_sys_line_ref :=
+                               p_line_tbl (l_cntl).order_source_line_reference;
+         -- Default fulfillmet set (l_line_tbl(cntl).fulfillment_set)
+         l_line_tbl (l_cntl).fulfillment_set := '1';
+
+         -- Assign customer product identifier (l_line_tbl(cntl).attribute11)
+         IF p_line_tbl (l_cntl).customer_product IS NOT NULL
+         THEN
+            l_line_tbl (l_cntl).attribute11 :=
+                                         p_line_tbl (l_cntl).customer_product;
+         -- p_line_tbl (l_cnt1).customer_product;
+         END IF;
+
+
+         -- Default Billable Expense (l_line_tbl(cntl).attribute19 ='None')
+         l_line_tbl (l_cntl).attribute19 := 'None';
+
+         --Derive fulfillment location id (l_line_tbl(cntl).attribute14)
+         BEGIN
+            SELECT location_id
+              INTO l_line_tbl (l_cntl).attribute14
+              FROM hr_locations
+             WHERE 1 = 1
+               AND NVL (inactive_date, TRUNC (SYSDATE)) >= TRUNC (SYSDATE)
+               AND location_code = p_line_tbl (l_cntl).fulfillment_location;
+         EXCEPTION
+            WHEN OTHERS
+            THEN
+               l_line_error_flag := 'E';
+               p_line_rec_out (l_cntl).line_err_msg :=  p_line_rec_out (l_cntl).line_err_msg ||','||
+                                  'Error in fetching fulfillment location id';
+         END;
+
+         --Default calculate price flag (l_line_tbl(cntl).calculate_price_flag = 'Y')
+
+           /* --Put the pricing field derivations here --*/
+
+         -- l_line_price_att_tbl (l_cntl) :=
+         --    oe_order_pub.g_miss_line_price_att_rec;
+         l_line_price_att_tbl (l_cntl).line_index := l_cntl;
+         IF l_item_type <>'UL ST'
+         THEN
+         l_line_tbl (l_cntl).calculate_price_flag := 'Y';  
+         l_line_price_att_tbl (l_cntl).operation := oe_globals.g_opr_create;       
+         l_line_price_att_tbl (l_cntl).flex_title := 'QP_ATTR_DEFNS_PRICING';
+         --Default the pricing context (l_line_price_att_tbl(cntl).pricing_context = 'LW_PRICING')
+
+         l_line_price_att_tbl (l_cntl).pricing_context := 'LW_PRICING';
+         -- Assign the top item nmuber (l_line_price_att_tbl(cntl).pricing_attribute1 )
+         l_line_price_att_tbl (l_cntl).pricing_attribute1 :=
+                                           p_line_tbl (l_cntl).top_item_number;
+         --Assign the indsutry item nmuber (l_line_price_att_tbl(cntl).pricing_attribute2)
+         l_line_price_att_tbl (l_cntl).pricing_attribute2 :=
+                                             p_line_tbl (l_cntl).industry_item;
+                                             
+                                                      
+         END IF;
+         
+             IF g_debug_msg <> '0' then                                  
+                write_log (   'Line derivations complete for line number:'
+                               || p_line_tbl (l_cntl).line_number
+                              );
+                              end if;
+                   
+      END LOOP;
+
+    IF g_debug_msg <> '0' then     
+      write_log
+                        (   'All Line derivations complete. Line status flag:'
+                         || l_line_error_flag
+                        );
+            write_log('newline');                        
+                       
+      end if;
+
+      
+      IF l_error_flag = 'S' AND l_line_error_flag = 'S'
+      THEN
+         -- CALLTO PROCESS ORDER API
+          IF g_debug_msg <> '0' then    
+         write_log ('Call order creation API');
+         end if;
+         oe_order_pub.process_order
+                   (p_org_id                      => l_org_id,
+                    --     p_operating_unit           => NULL,
+                    p_api_version_number          => 1.0,
+                    p_init_msg_list               => fnd_api.g_true,
+                    p_return_values               => fnd_api.g_true,
+                    p_action_commit               => fnd_api.g_false,--527
+                    p_header_rec                  => l_header_rec,
+                    p_line_tbl                    => l_line_tbl,
+                    p_action_request_tbl          => l_action_request_tbl,
+                    p_line_price_att_tbl          => l_line_price_att_tbl,
+                    -- OUT variables
+                    x_header_rec                  => l_header_rec_out,
+                    x_header_val_rec              => l_header_val_rec_out,
+                    x_header_adj_tbl              => l_header_adj_tbl_out,
+                    x_header_adj_val_tbl          => l_header_adj_val_tbl_out,
+                    x_header_price_att_tbl        => l_header_price_att_tbl_out,
+                    x_header_adj_att_tbl          => l_header_adj_att_tbl_out,
+                    x_header_adj_assoc_tbl        => l_header_adj_assoc_tbl_out,
+                    x_header_scredit_tbl          => l_header_scredit_tbl_out,
+                    x_header_scredit_val_tbl      => l_header_scredit_val_tbl_out,
+                    x_line_tbl                    => l_line_tbl_out,
+                    x_line_val_tbl                => l_line_val_tbl_out,
+                    x_line_adj_tbl                => l_line_adj_tbl_out,
+                    x_line_adj_val_tbl            => l_line_adj_val_tbl_out,
+                    x_line_price_att_tbl          => l_line_price_att_tbl_out,
+                    x_line_adj_att_tbl            => l_line_adj_att_tbl_out,
+                    x_line_adj_assoc_tbl          => l_line_adj_assoc_tbl_out,
+                    x_line_scredit_tbl            => l_line_scredit_tbl_out,
+                    x_line_scredit_val_tbl        => l_line_scredit_val_tbl_out,
+                    x_lot_serial_tbl              => l_lot_serial_tbl_out,
+                    x_lot_serial_val_tbl          => l_lot_serial_val_tbl_out,
+                    x_action_request_tbl          => l_action_request_tbl_out,
+                    x_return_status               => l_return_status,
+                    x_msg_count                   => l_msg_count,
+                    x_msg_data                    => x_msg_data
+                   );
+                   
+
+                   
+        IF g_debug_msg <> '0' then  
+         write_log('return status: ' || l_return_status);
+        end if;
+        
+         -- CHECK RETURN STATUS
+         IF l_return_status = fnd_api.g_ret_sts_success
+         THEN
+
+            IF g_debug_msg <> '0' then  
+               write_log('Sales Order Successfully Created');
+
+            END IF;
+
+
+
+            p_header_rec_out.order_number :=     --  'Order Number' || ' :' ||
+                                                 l_header_rec_out.order_number;
+            p_header_rec_out.source_ref :=
+                                        --  'Aurora Labware Project Header Identifier'
+                                                --  || ''
+                                                   --  ||
+                                        l_header_rec_out.orig_sys_document_ref;
+            p_header_rec_out.msg_ack := 'Order Created';
+            p_header_rec_out.error_msg := '';
+            p_line_rec_out := xxul_order_line_out_tbl_type ();
+            p_line_rec_out.DELETE;
+            
+            
+            IF g_debug_msg <> '0' then 
+            write_log ('Creating header attachments');
+            end if;
+            
+            xxul_attachment_header (p_user_id         => l_user_id,
+                                    p_header_rec      => p_header_rec,
+                                    p_header_id       => l_header_rec_out.header_id
+                                   );
+
+            FOR i IN 1 .. l_line_tbl_out.COUNT
+            LOOP
+               p_line_rec_out.EXTEND;
+               p_line_rec_out (i) :=
+                                  xxul_lines_rec_out (NULL, NULL, NULL, NULL);
+               p_line_rec_out (i).order_line_id := l_line_tbl_out (i).line_id;
+               p_line_rec_out (i).line_number :=
+                                              -- l_line_tbl_out (i).line_number; --Fix for Bug 45044
+                                               RTRIM(l_line_tbl_out (i).line_number || '.' || l_line_tbl_out (i).shipment_number || '.' || 
+l_line_tbl_out (i).option_number ||'.' || l_line_tbl_out (i).component_number, '.');
+               p_line_rec_out (i).line_identifier :=
+                                         l_line_tbl_out (i).orig_sys_line_ref;
+               p_line_rec_out (i).line_err_msg := '';
+               
+                           IF g_debug_msg <> '0' then                      
+            write_log('Creating line attachments');
+            end if;
+            
+            xxul_attachment_lines (p_user_id        => l_user_id,
+                                   p_line_tbl       => p_line_tbl,
+                                   p_line_id        => l_line_tbl_out(i).line_id,
+                                   p_line_number    => l_line_tbl_out(i).line_number
+                                  );
+            END LOOP;
+
+            --           COMMIT;
+
+                                   
+
+         ELSE
+         IF g_debug_msg <> '0' then    
+            write_log('Failed to Create Sales Order');
+         end if;
+         
+         
+            l_msg_data := '';
+
+            FOR i IN 1 .. l_msg_count
+            LOOP
+               oe_msg_pub.get (p_msg_index          => i,
+                               p_encoded            => fnd_api.g_false,
+                               p_data               => l_msg_data,
+                               p_msg_index_out      => l_msg_index
+                              );
+                              
+               IF g_debug_msg <> '0' then             
+               write_log ('message is:' || l_msg_data);
+               write_log ('message index is:' || l_msg_index);
+               end if;
+               
+               l_header_err_msg :=
+                  l_header_err_msg || l_msg_index || ' - ' || l_msg_data
+                  || '; ';
+            END LOOP;
+
+            p_header_rec_out.order_number := '';
+            p_header_rec_out.msg_ack := 'Order Creation Failed';
+            p_header_rec_out.source_ref := 
+                                        l_header_rec_out.orig_sys_document_ref;
+            p_header_rec_out.error_msg := l_return_status || l_header_err_msg;
+            p_line_rec_out := xxul_order_line_out_tbl_type ();
+            p_line_rec_out.DELETE;
+            p_line_rec_out.EXTEND;
+
+            FOR i IN 1 .. l_line_tbl_out.COUNT
+            LOOP
+               p_line_rec_out.EXTEND;
+               p_line_rec_out (i) :=
+                                  xxul_lines_rec_out (NULL, NULL, NULL, NULL);
+              -- p_line_rec_out (i).order_line_id := l_line_tbl_out (i).line_id;
+               p_line_rec_out (i).line_number :=
+                                               l_line_tbl_out (i).line_number;
+               p_line_rec_out (i).line_identifier :=
+                                         l_line_tbl_out (i).orig_sys_line_ref;
+               p_line_rec_out (i).line_err_msg := '';
+            END LOOP;
+         --    ROLLBACK;
+         END IF;
+      ELSE
+         p_header_rec_out.order_number := '';
+         --Commented pas part of bug fix 44959
+        -- p_header_rec_out.source_ref := --This variable has been assigned a value at the beginning of the procedure
+       --                                l_header_rec_out.orig_sys_document_ref;
+         p_header_rec_out.msg_ack := 'Order Creation Failed';
+         p_header_rec_out.error_msg := l_header_err_msg;
+      END IF;
+   EXCEPTION
+      WHEN e_custom_exception
+      THEN
+        p_header_rec_out.order_number := '';
+         p_header_rec_out.msg_ack := 'Order Creation Failed';
+         p_header_rec_out.error_msg := l_header_err_msg;
+      WHEN OTHERS
+      THEN
+        p_header_rec_out.order_number := '';
+        p_header_rec_out.msg_ack := 'Order Creation Failed';
+        p_header_rec_out.error_msg := 'Standard Oracle exception:'||SQLERRM; -- Added as per bug fix 44957
+   END xxul_bnp_process_order;
+END; 
+/
+
+
+
+61323115.07.8
