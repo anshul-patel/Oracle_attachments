@@ -616,11 +616,8 @@ CREATE OR REPLACE PACKAGE BODY xxaqv_fnd_attachments_pkg AS
                                  , x_err_msg       OUT   VARCHAR2
    ) IS
 -- This Cursor is used to retrieve information from Staging Table --
-    gv_debug_flag := p_debug_flag;
-	
-	 
-         END IF;
-      CURSOR lcu_cur_select IS
+    
+      CURSOR lcu_r_cur_select IS
       SELECT entity_record_identifier   
 	      , entity_name                
 	      , seq_num                    
@@ -652,8 +649,8 @@ CREATE OR REPLACE PACKAGE BODY xxaqv_fnd_attachments_pkg AS
       FOR lcu_r_cur_select IN cur_select 
 	  LOOP                                                     ----Calling WEB API
          fnd_webattch.add_attachment( seq_num                => lcu_r_cur_select.seq_num
-                                    , category_id            => NULL --category_id
-                                    , document_description   => NULL --description
+                                    , category_id            => lcu_r_cur_select.category_id          --category_id
+                                    , document_description   => lcu_r_cur_select.document_description --description
                                     , datatype_id            => lcu_r_cur_select.datatype_id --datatype_id
                                     , text                   => lcu_r_cur_select.text
                                     , file_name              => lcu_r_cur_select.file_name                       
@@ -670,7 +667,155 @@ CREATE OR REPLACE PACKAGE BODY xxaqv_fnd_attachments_pkg AS
          );
       END LOOP;
    END import_staging_data;
-   
+
+--/****************************************************************************************************************
+-- * Procedure : TIE_BACK_STAGING                                                                                 *
+-- * Purpose   : This procedure will tie back base table data to staging table.                                   *
+-- ****************************************************************************************************************/
+
+   PROCEDURE tie_back_staging ( x_retcode   OUT   NUMBER
+                              , x_err_msg   OUT   VARCHAR2
+   ) IS
+     -- Local Variables
+      ln_err_count        NUMBER := 0;
+      ln_count            NUMBER;
+      lv_processed_flag   VARCHAR2(2);
+      ln_invoice_id       NUMBER;
+   BEGIN
+      xxaqv_conv_cmn_utility_pkg.print_logs('**************************** Attachment Import Report *******************************','O');
+      xxaqv_conv_cmn_utility_pkg.print_logs(         ''         , 'O'      );
+      xxaqv_conv_cmn_utility_pkg.print_logs(rpad( 'Date:',30)||rpad(sysdate,30) ,'O');
+      xxaqv_conv_cmn_utility_pkg.print_logs(         ''         , 'O'      );
+      xxaqv_conv_cmn_utility_pkg.print_logs('***********************************************************************************' ,'O' );
+      IF gv_debug_flag = 'YES' 
+	  THEN
+         xxaqv_conv_cmn_utility_pkg.print_logs('TIE_BACK_STAGING: Update staging tables with success records and tie back oracle data.');
+      END IF;
+      xxaqv_conv_cmn_utility_pkg.print_logs('TIE_BACK_STAGING: Tie back oracle data for Attachments');
+      FOR i IN (
+         SELECT invoice_num
+                , invoice_id
+                , vendor_id
+                , vendor_site_id
+           FROM xxaqv_ap_inv_header_stg
+          WHERE processed_flag = 'IS'
+      ) LOOP
+         BEGIN
+            ln_invoice_id       := NULL;
+            SELECT invoice_id
+              INTO ln_invoice_id
+              FROM ap_invoices_all
+             WHERE invoice_num = i.invoice_num
+               AND vendor_id      = i.vendor_id
+               AND vendor_site_id  = i.vendor_site_id;
+
+            lv_processed_flag   := 'PS';
+         EXCEPTION
+            WHEN no_data_found THEN
+               lv_processed_flag := 'PE';
+         END;
+
+         BEGIN
+            UPDATE xxaqv_ap_inv_header_stg
+               SET
+               processed_flag = lv_processed_flag
+             WHERE invoice_num = i.invoice_num
+               AND vendor_id       = i.vendor_id
+               AND vendor_site_id  = i.vendor_site_id
+               AND processed_flag  = 'IS';
+
+            UPDATE xxaqv_ap_inv_lines_stg
+               SET
+               processed_flag = lv_processed_flag
+             WHERE invoice_id = i.invoice_id
+               AND processed_flag = 'IS';
+
+            COMMIT;
+         EXCEPTION
+            WHEN OTHERS THEN
+               ROLLBACK;
+               x_retcode   := 1;
+               x_err_msg   := 'TIE_BACK_STAGING: Unexpected error while updating staging tables '
+                            || to_char(sqlcode)
+                            || '-'
+                            || sqlerrm;
+         END;
+
+      END LOOP;
+
+      IF gv_debug_flag = 'YES' THEN
+         xxaqv_conv_cmn_utility_pkg.print_logs('TIE_BACK_STAGING: Update staging tables with error record details.');
+      END IF;
+      xxaqv_conv_cmn_utility_pkg.print_logs(
+         ''
+         , 'O'
+      );
+      xxaqv_conv_cmn_utility_pkg.print_logs(
+         'AP Invoices Information Imported/Updated Successfully.'
+         , 'O'
+      );
+      xxaqv_conv_cmn_utility_pkg.print_logs(
+         ''
+         , 'O'
+      );
+      xxaqv_conv_cmn_utility_pkg.print_logs(
+         rpad(
+            'invoice_id'
+            , 30
+         )
+         || rpad(
+            'invoice_amount'
+            , 30
+         )
+         || rpad(
+            'invoice_num'
+            , 30
+         )
+         || rpad(
+            'VENDOR_SITE_id'
+            , 30
+         )
+         || rpad(
+            'source'
+            , 30
+         )
+         || rpad(
+            'invoice_type_lookup_code'
+            , 30
+         )
+         , 'O'
+      );
+
+      FOR j IN (
+         SELECT xaihs.invoice_id
+                , xaihs.invoice_num
+                , xaihs.invoice_amount
+                , xaihs.vendor_site_id
+                , xaihs.source
+                , xaihs.invoice_type_lookup_code
+           FROM xxaqv_ap_inv_header_stg   xaihs
+                , xxaqv_ap_inv_lines_stg    xails
+          WHERE xaihs.processed_flag = 'PS'
+            AND xails.processed_flag  = 'PS'
+            AND xaihs.invoice_id      = xails.invoice_id
+      ) LOOP 
+	  xxaqv_conv_cmn_utility_pkg.print_logs( rpad('invoice_id', 30 ) || rpad( 'invoice_amount' , 30 ) || rpad('invoice_num', 30 ) || rpad('VENDOR_SITE_id', 30 ) || rpad('source', 30 ) || rpad('invoice_type_lookup_code', 30 ) , 'O');
+      END LOOP;
+
+      xxaqv_conv_cmn_utility_pkg.print_logs('', 'O');
+      xxaqv_conv_cmn_utility_pkg.print_logs('***********************************************************************************', 'O');
+   EXCEPTION
+      WHEN OTHERS THEN
+         x_retcode   := 1;
+         x_err_msg   := 'TIE_BACK_STAGING: Unexpected error in tie_back_staging '
+                      || to_char(sqlcode)
+                      || '-'
+                      || sqlerrm;
+         xxaqv_conv_cmn_utility_pkg.print_logs('TIE_BACK_STAGING: Unexpected error in tie_back_staging'
+                                               || '-'
+                                               || sqlerrm);
+   END tie_back_staging;
+    
 --/****************************************************************************************************************
 -- * Procedure  : MAIN                                                                                            *
 -- * Purpose    : This Procedure is the main procedure                                                            *
@@ -686,7 +831,8 @@ PROCEDURE main( errbuf          OUT   VARCHAR2
    
     lv_error_msg    VARCHAR2(4000) := NULL;
     l_retcode       NUMBER;
-          
+    
+	BEGIN      
     IF p_debug_flag IS NULL 
     THEN
          gv_debug_flag := NULL;
@@ -732,7 +878,45 @@ PROCEDURE main( errbuf          OUT   VARCHAR2
 
          validate_staging_records( x_retcode       => l_retcode
                                  , x_err_msg       => lv_error_msg );
+		
+		
+		ELSIF p_conv_mode = 'IMPORT' THEN
+         IF gv_debug_flag = 'YES' 
+		 THEN
+            xxaqv_conv_cmn_utility_pkg.print_logs('VALIDATING RECORDS IN THE STAGING TABLE');
+            xxaqv_conv_cmn_utility_pkg.print_logs(' Conversion Mode : ' || p_conv_mode);
+            xxaqv_conv_cmn_utility_pkg.print_logs(' Attachment Type : ' || gv_attach_type);
+			xxaqv_conv_cmn_utility_pkg.print_logs(' Entity Name : '     || gv_entity_name);
+         END IF;
+
+         import_staging_data ( x_retcode       => l_retcode
+                             , x_err_msg       => lv_error_msg );
+							 
+        ELSIF p_conv_mode = 'TIEBACK' 
+		THEN
+		IF gv_debug_flag = 'YES' 
+		 THEN
+            xxaqv_conv_cmn_utility_pkg.print_logs('VALIDATING RECORDS IN THE STAGING TABLE');
+            xxaqv_conv_cmn_utility_pkg.print_logs(' Conversion Mode : ' || p_conv_mode);
+            xxaqv_conv_cmn_utility_pkg.print_logs(' Attachment Type : ' || gv_attach_type);
+			xxaqv_conv_cmn_utility_pkg.print_logs(' Entity Name : '     || gv_entity_name);
+         END IF;
+		 tie_back_staging ( x_retcode   => l_retcode
+                          , x_err_msg   => lv_error_msg );
       END IF;
+	  EXCEPTION
+      WHEN OTHERS THEN
+         xxaqv_conv_cmn_utility_pkg.print_logs('Program Error'
+                                               || p_conv_mode
+                                               || to_char(sqlcode)
+                                               || '-'
+                                               || sqlerrm);
+
+         lv_error_msg := lv_error_msg
+                         || to_char(sqlcode)
+                         || '-'
+                         || sqlerrm;
+	END main;					 
 END xxaqv_fnd_attachments_pkg;
 
 

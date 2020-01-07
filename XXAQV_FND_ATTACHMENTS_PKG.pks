@@ -39,6 +39,15 @@ CREATE OR REPLACE PACKAGE xxaqv_fnd_attachments_pkg AS
    PROCEDURE import_staging_data ( x_retcode       OUT   NUMBER
                                  , x_err_msg       OUT   VARCHAR2
    );
+
+--/****************************************************************************************************************
+-- * Procedure : TIE_BACK_STAGING                                                                                 *
+-- * Purpose   : This procedure will tie back base table data to staging table.                                   *
+-- ****************************************************************************************************************/
+
+   PROCEDURE tie_back_staging ( x_retcode   OUT   NUMBER
+                              , x_err_msg   OUT   VARCHAR2
+   );
 --/****************************************************************************************************************
 -- * Procedure  : MAIN                                                                                            *
 -- * Purpose    : This Procedure is the main procedure                                                            *
