@@ -10,19 +10,20 @@
 -- * Change History                                                                                               *
 -- * Version     Created By        Creation Date    Comments                                                      *
 -- *--------------------------------------------------------------------------------------------------------------*
--- * 1.0         CTS               26/11/2019     Initial Version                                                 *
+-- * 1.0         CTS               07/01/2020     Initial Version                                                 *
 -- ***************************************************************************************************************/
-CREATE TABLE xxaqv.xxaqv_fnd_atts_doc_table_stg ( entity_record_identifier   VARCHAR2(500)
+CREATE TABLE xxaqv.xxaqv_fnd_atts_doc_table_stg ( pk1_value                  VARCHAR2(500)
                                                 , entity_name                VARCHAR2(40)
                                                 , seq_num                    NUMBER        -- Seq Number of Attachments
-                                                , title                      VARCHAR2(80)  -- Attachment Title
-                                                , category                   VARCHAR2(255) -- Category Name
+                                                , title                      VARCHAR2(1000)  -- Attachment Title
+                                                , category_name              VARCHAR2(255) -- Category Name
+												, category_id                NUMBER        -- Category ID
                                                 , datatype_id                NUMBER        -- Type of Format
 												, datatype_name              VARCHAR2(50)
-                                                , document_description       VARCHAR2(1000)-- Description of the document
-                                                , text                       LONG          -- It dumps the data that present in Long Text Tables otherwise NUll
+                                                , document_description       VARCHAR2(4000)-- Description of the document
+                                                , text                       CLOB          -- It dumps the data that present in Long Text Tables otherwise NUll
                                                 , url                        VARCHAR2(4000)-- It dumps the url otherwise Null
-                                                , file_name                  VARCHAR2(1000)-- File Name--If File is Present then  dump otherwise we Give Name Based on Entity_name+ext
+                                                , file_name                  VARCHAR2(4000)-- File Name--If File is Present then  dump otherwise we Give Name Based on Entity_name+ext
                                                 , record_id                  NUMBER
                                                 , creation_date              DATE
                                                 , last_update_date           DATE
@@ -33,6 +34,11 @@ CREATE TABLE xxaqv.xxaqv_fnd_atts_doc_table_stg ( entity_record_identifier   VAR
                                                 , error_msg                  VARCHAR2(1000)
                                                 , document_id                NUMBER
                                                 , media_id                   NUMBER
+												, pk2_value                  VARCHAR2(500)
+												, pk3_value                  VARCHAR2(500)
+												, pk4_value                  VARCHAR2(500)
+												, pk5_value                  VARCHAR2(500)
+												
                                                  );
 
 EXEC ad_zd_table.upgrade('XXAQV','XXAQV_FND_ATTS_DOC_TABLE_STG');

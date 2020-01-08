@@ -30,6 +30,78 @@ CREATE OR REPLACE PACKAGE BODY xxaqv_fnd_attachments_pkg AS
    gv_id                         NUMBER;
    gv_entity_name                VARCHAR2(100);
    gv_attach_type                VARCHAR2(100);
+   gv_pk1_value                  VARCHAR2(100);
+   gv_user_id                    NUMBER := apps.fnd_profile.value('USER_ID');
+   gv_login_id                   NUMBER := fnd_global.login_id;
+   
+--/*****************************************************************************************************************
+-- * Function  : validate_category_id                                                                             *
+-- * Purpose   : This Function will validate category ID                                                          *
+-- ****************************************************************************************************************/	
+
+   FUNCTION validate_category_id ( p_category_name    IN    VARCHAR2
+                                 , lv_category_id     OUT   VARCHAR2
+                                 , p_error_msg        OUT   VARCHAR2
+   ) RETURN VARCHAR2 IS
+   BEGIN
+      IF p_category_name IS NULL THEN
+         RETURN 'S';
+      ELSE
+         BEGIN
+            SELECT category_id
+              INTO lv_category_id
+              FROM fnd_document_categories
+             WHERE upper(trim(name)) = upper(trim(p_category_name));
+               
+         EXCEPTION
+            WHEN OTHERS THEN
+               p_error_msg := 'Category ID not found in the system; ';
+               RETURN 'E';
+         END;
+      END IF;
+
+      RETURN 'S';
+   EXCEPTION
+      WHEN OTHERS THEN
+         p_error_msg := 'Error retrieving category id';
+         RETURN 'E';
+   END validate_category_id;
+   
+   
+--/*****************************************************************************************************************
+-- * Function  : validate_datatype_id                                                                             *
+-- * Purpose   : This Function will validate payement term                                                         *
+-- ****************************************************************************************************************/	
+
+   FUNCTION validate_datatype_id ( p_datatype_name  IN    VARCHAR2
+                                 , lv_datatype_id   OUT   VARCHAR2
+                                 , p_error_msg      OUT   VARCHAR2
+   ) RETURN VARCHAR2 IS
+   BEGIN
+      IF p_datatype_name IS NULL THEN
+         p_error_msg := 'Datatype name is NULL ';
+         RETURN 'E';
+      ELSE
+         BEGIN
+            SELECT datatype_id
+              INTO lv_datatype_id
+              FROM fnd_document_datatypes
+             WHERE upper(trim(name)) = upper(trim(p_datatype_name));
+			 
+         EXCEPTION
+            WHEN OTHERS THEN
+               p_error_msg := 'Datatype ID not found in the system; ';
+               RETURN 'E';
+         END;
+      END IF;
+
+      RETURN 'S';
+   EXCEPTION
+      WHEN OTHERS THEN
+         p_error_msg := 'Error retrieving Datatype ID';
+         RETURN 'E';
+   END validate_datatype_id;
+
    
 --/****************************************************************************************************************
 -- * Procedure  : LOAD_STAGING_DATA                                                                               *
@@ -46,7 +118,11 @@ CREATE OR REPLACE PACKAGE BODY xxaqv_fnd_attachments_pkg AS
       SELECT fad.seq_num       sequence_num
            , fdt.description   document_description
            , fad.entity_name   entity_name
-           , fdst.short_text   text
+           , regexp_replace
+		     (fdst.short_text
+			 , '[^[!-~]]*'
+             , ' '
+                           )   text
            , NULL              file_name
            , NULL              url
            , NULL              function_name
@@ -63,13 +139,14 @@ CREATE OR REPLACE PACKAGE BODY xxaqv_fnd_attachments_pkg AS
             ,fnd_document_datatypes@xxaqv_conv_cmn_dblink      fdd
             ,fnd_document_categories@xxaqv_conv_cmn_dblink     fdc
             ,fnd_documents_tl@xxaqv_conv_cmn_dblink            fdt
-       WHERE fdst.media_id = fd.media_id
+       WHERE fdst.media_id   = fd.media_id
          AND fad.document_id = fd.document_id
          AND fdd.datatype_id = fd.datatype_id
-         and fad.category_id= fdc.category_id(+)
+         and fad.category_id = fdc.category_id(+)
          AND fdt.document_id = fd.document_id
-         AND fdd.name = 'SHORT_TEXT'
-         AND fad.entity_name = nvl(gv_entity_name,fad.entity_name);-- passing Entity Name
+         AND fdd.name        = 'SHORT_TEXT'
+         AND fad.entity_name = nvl(gv_entity_name,fad.entity_name)-- passing Entity Name
+		 AND fad.pk1_value   = nvl(gv_pk1_value,fad.pk1_value);   -- passing PK1_VALUE
 
   -- This Cursor is used to retrieve information about Long Text Attachments ---
 
@@ -94,13 +171,14 @@ CREATE OR REPLACE PACKAGE BODY xxaqv_fnd_attachments_pkg AS
             ,fnd_document_datatypes@xxaqv_conv_cmn_dblink      fdd
             ,fnd_document_categories@xxaqv_conv_cmn_dblink     fdc
             ,fnd_documents_tl@xxaqv_conv_cmn_dblink            fdt
-       WHERE fdlt.media_id = fd.media_id
+       WHERE fdlt.media_id   = fd.media_id
          AND fad.document_id = fd.document_id
          AND fdd.datatype_id = fd.datatype_id
-         AND fad.category_id= fdc.category_id(+)
+         AND fad.category_id = fdc.category_id(+)
          AND fdt.document_id = fd.document_id
-         AND fdd.name = 'LONG_TEXT'
+         AND fdd.name        = 'LONG_TEXT'
          AND fad.entity_name = nvl(gv_entity_name,fad.entity_name);-- passing Entity Name
+		 AND fad.pk1_value   = nvl(gv_pk1_value,fad.pk1_value);    -- passing PK1_VALUE
          
  -- This Cursor is used to retrieve information about Web URL Attachments.--
 
@@ -126,14 +204,15 @@ CREATE OR REPLACE PACKAGE BODY xxaqv_fnd_attachments_pkg AS
            , fnd_documents_tl@xxaqv_conv_cmn_dblink          fdt
        WHERE fdd.datatype_id = fd.datatype_id
          AND fad.document_id = fd.document_id
-         AND fad.category_id= fdc.category_id(+)
+         AND fad.category_id = fdc.category_id(+)
          AND fdt.document_id = fd.document_id
-         AND fdd.name = 'WEB_PAGE'
+         AND fdd.name        = 'WEB_PAGE'
          AND fad.entity_name = nvl(gv_entity_name,fad.entity_name); -- passing Entity Name
+		  AND fad.pk1_value  = nvl(gv_pk1_value,fad.pk1_value);     -- passing PK1_VALUE
          
  -- This Cursor is used to retrieve information about File Attachments. --
 
-      CURSOR cur_file IS
+      /*CURSOR cur_file IS
       SELECT fad.entity_name
            , fad.seq_num
            , fdt.title
@@ -155,7 +234,7 @@ CREATE OR REPLACE PACKAGE BODY xxaqv_fnd_attachments_pkg AS
          AND fd.datatype_id   = fdd.datatype_id
          AND fd.category_id   = fdct.category_id
          AND fdd.user_name    = 'File'
-         AND fad.entity_name  = p_entity_name;
+         AND fad.entity_name = nvl(gv_entity_name,fad.entity_name); -- passing Entity Name*/
 
     
      -- LOCAL VARIABLES
@@ -183,15 +262,15 @@ CREATE OR REPLACE PACKAGE BODY xxaqv_fnd_attachments_pkg AS
       xxaqv_conv_cmn_utility_pkg.print_logs('******************************************************************************************************');
     END IF;
 	
-	IF p_attach_type = 'SHORT_TEXT' or gv_attach_type = 'ALL'
+	IF gv_attach_type = 'SHORT_TEXT' or gv_attach_type = 'ALL'
 	THEN
 	FOR i IN cur_short 
 	LOOP
 	 ln_line_count                                                            := ln_line_count + 1;
-     gt_xxaqv_fnd_atts_doc_tab(ln_line_count).entity_record_identifier        := i.pk1_value;
+     gt_xxaqv_fnd_atts_doc_tab(ln_line_count).pk1_value                       := i.pk1_value;
      gt_xxaqv_fnd_atts_doc_tab(ln_line_count).entity_name                     := i.entity_name;             
      gt_xxaqv_fnd_atts_doc_tab(ln_line_count).seq_num                         := i.sequence_num;                
-     gt_xxaqv_fnd_atts_doc_tab(ln_line_count).title                           := i.title;                   
+     --gt_xxaqv_fnd_atts_doc_tab(ln_line_count).title                           := i.title;                   
      gt_xxaqv_fnd_atts_doc_tab(ln_line_count).category_name                   := i.category_name;               
      gt_xxaqv_fnd_atts_doc_tab(ln_line_count).datatype_name                   := i.datatype_name;           
      gt_xxaqv_fnd_atts_doc_tab(ln_line_count).document_description            := i.document_description;    
@@ -200,10 +279,14 @@ CREATE OR REPLACE PACKAGE BODY xxaqv_fnd_attachments_pkg AS
      gt_xxaqv_fnd_atts_doc_tab(ln_line_count).file_name                       := i.file_name;              
      gt_xxaqv_fnd_atts_doc_tab(ln_line_count).creation_date                   := SYSDATE;        
      gt_xxaqv_fnd_atts_doc_tab(ln_line_count).last_update_date                := SYSDATE;       
-     gt_xxaqv_fnd_atts_doc_tab(ln_line_count).last_update_login               := gn_login_id;      
-     gt_xxaqv_fnd_atts_doc_tab(ln_line_count).last_updated_by                 := gn_user_id;       
-     gt_xxaqv_fnd_atts_doc_tab(ln_line_count).created_by                      := gn_user_id;            
+     gt_xxaqv_fnd_atts_doc_tab(ln_line_count).last_update_login               := gv_login_id;      
+     gt_xxaqv_fnd_atts_doc_tab(ln_line_count).last_updated_by                 := gv_user_id;       
+     gt_xxaqv_fnd_atts_doc_tab(ln_line_count).created_by                      := gv_user_id;            
      gt_xxaqv_fnd_atts_doc_tab(ln_line_count).processed_flag                  := 'LS';
+	 gt_xxaqv_fnd_atts_doc_tab(ln_line_count).pk2_value                       := i.pk2_value;
+	 gt_xxaqv_fnd_atts_doc_tab(ln_line_count).pk3_value                       := i.pk3_value;
+	 gt_xxaqv_fnd_atts_doc_tab(ln_line_count).pk4_value                       := i.pk4_value;
+	 gt_xxaqv_fnd_atts_doc_tab(ln_line_count).pk5_value                       := i.pk5_value;
      
 	 END LOOP;
 	 BEGIN
@@ -242,15 +325,15 @@ CREATE OR REPLACE PACKAGE BODY xxaqv_fnd_attachments_pkg AS
 
 	END IF;
 	
-	IF p_attach_type = 'LONG_TEXT' or gv_attach_type = 'ALL'
+	IF gv_attach_type = 'LONG_TEXT' or gv_attach_type = 'ALL'
 	THEN
 	FOR i IN cur_long 
 	LOOP
 	 ln_line_count                                                            := ln_line_count + 1;
-     gt_xxaqv_fnd_atts_doc_tab(ln_line_count).entity_record_identifier        := i.pk1_value;
+     gt_xxaqv_fnd_atts_doc_tab(ln_line_count).pk1_value                       := i.pk1_value;
      gt_xxaqv_fnd_atts_doc_tab(ln_line_count).entity_name                     := i.entity_name;             
      gt_xxaqv_fnd_atts_doc_tab(ln_line_count).seq_num                         := i.sequence_num;                
-     gt_xxaqv_fnd_atts_doc_tab(ln_line_count).title                           := i.title;                   
+     --gt_xxaqv_fnd_atts_doc_tab(ln_line_count).title                           := i.title;                   
      gt_xxaqv_fnd_atts_doc_tab(ln_line_count).category_name                   := i.category_name;               
      gt_xxaqv_fnd_atts_doc_tab(ln_line_count).datatype_name                   := i.datatype_name;           
      gt_xxaqv_fnd_atts_doc_tab(ln_line_count).document_description            := i.document_description;    
@@ -259,10 +342,14 @@ CREATE OR REPLACE PACKAGE BODY xxaqv_fnd_attachments_pkg AS
      gt_xxaqv_fnd_atts_doc_tab(ln_line_count).file_name                       := i.file_name;              
      gt_xxaqv_fnd_atts_doc_tab(ln_line_count).creation_date                   := SYSDATE;        
      gt_xxaqv_fnd_atts_doc_tab(ln_line_count).last_update_date                := SYSDATE;       
-     gt_xxaqv_fnd_atts_doc_tab(ln_line_count).last_update_login               := gn_login_id;      
-     gt_xxaqv_fnd_atts_doc_tab(ln_line_count).last_updated_by                 := gn_user_id;       
-     gt_xxaqv_fnd_atts_doc_tab(ln_line_count).created_by                      := gn_user_id;            
+     gt_xxaqv_fnd_atts_doc_tab(ln_line_count).last_update_login               := gv_login_id;      
+     gt_xxaqv_fnd_atts_doc_tab(ln_line_count).last_updated_by                 := gv_user_id;       
+     gt_xxaqv_fnd_atts_doc_tab(ln_line_count).created_by                      := gv_user_id;            
      gt_xxaqv_fnd_atts_doc_tab(ln_line_count).processed_flag                  := 'LS';
+	 gt_xxaqv_fnd_atts_doc_tab(ln_line_count).pk2_value                       := i.pk2_value;
+	 gt_xxaqv_fnd_atts_doc_tab(ln_line_count).pk3_value                       := i.pk3_value;
+	 gt_xxaqv_fnd_atts_doc_tab(ln_line_count).pk4_value                       := i.pk4_value;
+	 gt_xxaqv_fnd_atts_doc_tab(ln_line_count).pk5_value                       := i.pk5_value;
      
 	 END LOOP;
 	 BEGIN
@@ -299,15 +386,15 @@ CREATE OR REPLACE PACKAGE BODY xxaqv_fnd_attachments_pkg AS
          END;
 	END IF;
 	
-	IF p_attach_type = 'WEB_PAGE' or gv_attach_type = 'ALL'
+	IF gv_attach_type = 'WEB_PAGE' or gv_attach_type = 'ALL'
 	THEN
 	FOR i IN cur_url 
 	LOOP
 	 ln_line_count                                                            := ln_line_count + 1;
-     gt_xxaqv_fnd_atts_doc_tab(ln_line_count).entity_record_identifier        := i.pk1_value;
+     gt_xxaqv_fnd_atts_doc_tab(ln_line_count).pk1_value        := i.pk1_value;
      gt_xxaqv_fnd_atts_doc_tab(ln_line_count).entity_name                     := i.entity_name;             
      gt_xxaqv_fnd_atts_doc_tab(ln_line_count).seq_num                         := i.sequence_num;                
-     gt_xxaqv_fnd_atts_doc_tab(ln_line_count).title                           := i.title;                   
+    -- gt_xxaqv_fnd_atts_doc_tab(ln_line_count).title                           := i.title;                   
      gt_xxaqv_fnd_atts_doc_tab(ln_line_count).category_name                   := i.category_name;               
      gt_xxaqv_fnd_atts_doc_tab(ln_line_count).datatype_name                   := i.datatype_name;           
      gt_xxaqv_fnd_atts_doc_tab(ln_line_count).document_description            := i.document_description;    
@@ -316,10 +403,14 @@ CREATE OR REPLACE PACKAGE BODY xxaqv_fnd_attachments_pkg AS
      gt_xxaqv_fnd_atts_doc_tab(ln_line_count).file_name                       := i.file_name;              
      gt_xxaqv_fnd_atts_doc_tab(ln_line_count).creation_date                   := SYSDATE;        
      gt_xxaqv_fnd_atts_doc_tab(ln_line_count).last_update_date                := SYSDATE;       
-     gt_xxaqv_fnd_atts_doc_tab(ln_line_count).last_update_login               := gn_login_id;      
-     gt_xxaqv_fnd_atts_doc_tab(ln_line_count).last_updated_by                 := gn_user_id;       
-     gt_xxaqv_fnd_atts_doc_tab(ln_line_count).created_by                      := gn_user_id;            
+     gt_xxaqv_fnd_atts_doc_tab(ln_line_count).last_update_login               := gv_login_id;      
+     gt_xxaqv_fnd_atts_doc_tab(ln_line_count).last_updated_by                 := gv_user_id;       
+     gt_xxaqv_fnd_atts_doc_tab(ln_line_count).created_by                      := gv_user_id;            
      gt_xxaqv_fnd_atts_doc_tab(ln_line_count).processed_flag                  := 'LS';
+	 gt_xxaqv_fnd_atts_doc_tab(ln_line_count).pk2_value                       := i.pk2_value;
+	 gt_xxaqv_fnd_atts_doc_tab(ln_line_count).pk3_value                       := i.pk3_value;
+	 gt_xxaqv_fnd_atts_doc_tab(ln_line_count).pk4_value                       := i.pk4_value;
+	 gt_xxaqv_fnd_atts_doc_tab(ln_line_count).pk5_value                       := i.pk5_value;
      
 	 END LOOP;
 	 BEGIN
@@ -355,13 +446,13 @@ CREATE OR REPLACE PACKAGE BODY xxaqv_fnd_attachments_pkg AS
                             || sqlerrm;
          END;
 	END IF;
-	
-	IF p_attach_type = 'FILE' or gv_attach_type = 'ALL'
+	/*
+	IF gv_attach_type = 'FILE' or gv_attach_type = 'ALL'
 	THEN
 	FOR i IN cur_file 
 	LOOP
 	 ln_line_count                                                            := ln_line_count + 1;
-     gt_xxaqv_fnd_atts_doc_tab(ln_line_count).entity_record_identifier        := i.pk1_value;
+     gt_xxaqv_fnd_atts_doc_tab(ln_line_count).pk1_value        := i.pk1_value;
      gt_xxaqv_fnd_atts_doc_tab(ln_line_count).entity_name                     := i.entity_name;             
      gt_xxaqv_fnd_atts_doc_tab(ln_line_count).seq_num                         := i.sequence_num;                
      gt_xxaqv_fnd_atts_doc_tab(ln_line_count).title                           := i.title;                   
@@ -373,10 +464,14 @@ CREATE OR REPLACE PACKAGE BODY xxaqv_fnd_attachments_pkg AS
      gt_xxaqv_fnd_atts_doc_tab(ln_line_count).file_name                       := i.file_name;              
      gt_xxaqv_fnd_atts_doc_tab(ln_line_count).creation_date                   := SYSDATE;        
      gt_xxaqv_fnd_atts_doc_tab(ln_line_count).last_update_date                := SYSDATE;       
-     gt_xxaqv_fnd_atts_doc_tab(ln_line_count).last_update_login               := gn_login_id;      
-     gt_xxaqv_fnd_atts_doc_tab(ln_line_count).last_updated_by                 := gn_user_id;       
-     gt_xxaqv_fnd_atts_doc_tab(ln_line_count).created_by                      := gn_user_id;            
+     gt_xxaqv_fnd_atts_doc_tab(ln_line_count).last_update_login               := gv_login_id;      
+     gt_xxaqv_fnd_atts_doc_tab(ln_line_count).last_updated_by                 := gv_user_id;       
+     gt_xxaqv_fnd_atts_doc_tab(ln_line_count).created_by                      := gv_user_id;            
      gt_xxaqv_fnd_atts_doc_tab(ln_line_count).processed_flag                  := 'LS';
+	 gt_xxaqv_fnd_atts_doc_tab(ln_line_count).pk2_value                       := i.pk2_value;
+	 gt_xxaqv_fnd_atts_doc_tab(ln_line_count).pk3_value                       := i.pk3_value;
+	 gt_xxaqv_fnd_atts_doc_tab(ln_line_count).pk4_value                       := i.pk4_value;
+	 gt_xxaqv_fnd_atts_doc_tab(ln_line_count).pk5_value                       := i.pk5_value;
      
 	 END LOOP;
 	 BEGIN
@@ -411,7 +506,7 @@ CREATE OR REPLACE PACKAGE BODY xxaqv_fnd_attachments_pkg AS
                             || '-'
                             || sqlerrm;
          END;
-	END IF;
+	END IF;*/
 	
 	EXCEPTION
       WHEN OTHERS THEN
@@ -439,13 +534,14 @@ CREATE OR REPLACE PACKAGE BODY xxaqv_fnd_attachments_pkg AS
 	 l_val_flag                       VARCHAR2(100);
 	 ln_error_msg                     VARCHAR2(4000) := NULL;
 	 lv_error_msg                     VARCHAR2(4000) := NULL;
+     ln_mstr_flag                     VARCHAR2(10);
 	 lv_category_id                   NUMBER;
 	 lv_datatype_id                   NUMBER;
 	 
 	 
 	 CURSOR lcu_attach
 	 IS
-	 SELECT entity_record_identifier   
+	 SELECT pk1_value   
 	      , entity_name                
 	      , seq_num                    
 	      , title                      
@@ -466,14 +562,19 @@ CREATE OR REPLACE PACKAGE BODY xxaqv_fnd_attachments_pkg AS
 	      , processed_flag             
 	      , error_msg                  
 	      , document_id                
-	      , media_id    
+	      , media_id 
+          , rowid	
+          , pk2_value                
+		  , pk3_value               
+		  , pk4_value               
+		  , pk5_value 
        FROM xxaqv_fnd_atts_doc_table_stg
 	  WHERE processed_flag = 'LS'
      	AND entity_name    = nvl(gv_entity_name,entity_name) 
 		AND datatype_name  = nvl(gv_attach_type,datatype_name);
 	 
 	 BEGIN
-	 xxaqv_conv_cmn_utility_pkg.print_logs('********************************** Validation Report *************************************************', 'O');
+	  xxaqv_conv_cmn_utility_pkg.print_logs('********************************** Validation Report *************************************************', 'O');
       xxaqv_conv_cmn_utility_pkg.print_logs(   ''   , 'O');      
 	  xxaqv_conv_cmn_utility_pkg.print_logs(rpad(   'Date:'   , 30)|| rpad(   sysdate   , 30), 'O');
       xxaqv_conv_cmn_utility_pkg.print_logs(   ''   , 'O');
@@ -494,12 +595,15 @@ CREATE OR REPLACE PACKAGE BODY xxaqv_fnd_attachments_pkg AS
          l_val_flag     := 'Y';  -- Resetting Flag Value after every invoice
 		 
 		 -- category name validation
-		  IF gv_debug_flag = 'YES' THEN
+		  IF gv_debug_flag = 'YES' 
+		  THEN
             xxaqv_conv_cmn_utility_pkg.print_logs('Validating category id');
          END IF;
 		  l_val_status   := validate_category_id(r_lcu_attch.category_name,lv_category_id,lv_error_msg);
-		  IF l_val_status = 'E' THEN
-            IF gv_debug_flag = 'YES' THEN
+		  IF l_val_status = 'E' 
+		  THEN
+            IF gv_debug_flag = 'YES' 
+			THEN
                xxaqv_conv_cmn_utility_pkg.print_logs('Validation of category id failed');
             END IF;
             l_val_flag     := 'N';
@@ -507,18 +611,22 @@ CREATE OR REPLACE PACKAGE BODY xxaqv_fnd_attachments_pkg AS
                             || '~'
                             || lv_error_msg;
          ELSE
-            IF gv_debug_flag = 'YES' THEN
+            IF gv_debug_flag = 'YES' 
+			THEN
                xxaqv_conv_cmn_utility_pkg.print_logs('Validation of category id Suceeded');
             END IF;
          END IF;
 		 
 		  -- datatype name validation
-		  IF gv_debug_flag = 'YES' THEN
+		  IF gv_debug_flag = 'YES' 
+		  THEN
             xxaqv_conv_cmn_utility_pkg.print_logs('Validating datatype id');
          END IF;
-		  l_val_status   := validate_category_id(r_lcu_attch.datatype_name,lv_datatype_id,lv_error_msg);
-		  IF l_val_status = 'E' THEN
-            IF gv_debug_flag = 'YES' THEN
+		  l_val_status   := validate_datatype_id(r_lcu_attch.datatype_name,lv_datatype_id,lv_error_msg);
+		  IF l_val_status = 'E' 
+		  THEN
+            IF gv_debug_flag = 'YES' 
+			THEN
                xxaqv_conv_cmn_utility_pkg.print_logs('Validation of datatype id failed');
             END IF;
             l_val_flag     := 'N';
@@ -566,7 +674,8 @@ CREATE OR REPLACE PACKAGE BODY xxaqv_fnd_attachments_pkg AS
 		  WHERE rowid            = r_lcu_attch.rowid;
 		  
 		 COMMIT;
-		 IF gv_debug_flag = 'YES' THEN
+		 IF gv_debug_flag = 'YES' 
+		 THEN
 		  xxaqv_conv_cmn_utility_pkg.print_logs('Staging Table Updated with valid records');
             END IF;
 		 END IF;
@@ -597,7 +706,8 @@ CREATE OR REPLACE PACKAGE BODY xxaqv_fnd_attachments_pkg AS
             x_retcode   := 1;
       END;
 	  EXCEPTION
-      WHEN OTHERS THEN
+      WHEN OTHERS 
+	  THEN
          xxaqv_conv_cmn_utility_pkg.print_logs('validating error for staging table encountered'
                                                || to_char(sqlcode)
                                                || '-'
@@ -617,8 +727,8 @@ CREATE OR REPLACE PACKAGE BODY xxaqv_fnd_attachments_pkg AS
    ) IS
 -- This Cursor is used to retrieve information from Staging Table --
     
-      CURSOR lcu_r_cur_select IS
-      SELECT entity_record_identifier   
+      CURSOR cur_select IS
+      SELECT pk1_value   
 	      , entity_name                
 	      , seq_num                    
 	      , title                      
@@ -640,6 +750,10 @@ CREATE OR REPLACE PACKAGE BODY xxaqv_fnd_attachments_pkg AS
 	      , error_msg                  
 	      , document_id                
 	      , media_id    
+		  , pk2_value                
+		  , pk3_value               
+		  , pk4_value               
+		  , pk5_value 
        FROM xxaqv_fnd_atts_doc_table_stg
 	  WHERE processed_flag = 'VS'
      	AND entity_name    = nvl(gv_entity_name,entity_name) 
@@ -657,13 +771,13 @@ CREATE OR REPLACE PACKAGE BODY xxaqv_fnd_attachments_pkg AS
                                     , url                    => lcu_r_cur_select.url
                                     , function_name          => NULL  --function_name
                                     , entity_name            => lcu_r_cur_select.entity_name
-                                    , pk1_value              => lcu_r_cur_select.entity_record_identifier
-                                    , pk2_value              => NULL
-                                    , pk3_value              => NULL
-                                    , pk4_value              => NULL
-                                    , pk5_value              => NULL
+                                    , pk1_value              => lcu_r_cur_select.pk1_value
+                                    , pk2_value              => lcu_r_cur_select.pk2_value
+                                    , pk3_value              => lcu_r_cur_select.pk3_value
+                                    , pk4_value              => lcu_r_cur_select.pk4_value
+                                    , pk5_value              => lcu_r_cur_select.pk5_value
                                     , media_id               => NULL
-                                    , user_id                => lcu_r_cur_select.user_id
+                                    , user_id                => gv_user_id
          );
       END LOOP;
    END import_staging_data;
@@ -680,7 +794,9 @@ CREATE OR REPLACE PACKAGE BODY xxaqv_fnd_attachments_pkg AS
       ln_err_count        NUMBER := 0;
       ln_count            NUMBER;
       lv_processed_flag   VARCHAR2(2);
-      ln_invoice_id       NUMBER;
+      ln_entity_name      VARCHAR2(100);
+	  ln_pk1_value        VARCHAR2(100);
+	  
    BEGIN
       xxaqv_conv_cmn_utility_pkg.print_logs('**************************** Attachment Import Report *******************************','O');
       xxaqv_conv_cmn_utility_pkg.print_logs(         ''         , 'O'      );
@@ -693,22 +809,22 @@ CREATE OR REPLACE PACKAGE BODY xxaqv_fnd_attachments_pkg AS
       END IF;
       xxaqv_conv_cmn_utility_pkg.print_logs('TIE_BACK_STAGING: Tie back oracle data for Attachments');
       FOR i IN (
-         SELECT invoice_num
-                , invoice_id
-                , vendor_id
-                , vendor_site_id
-           FROM xxaqv_ap_inv_header_stg
+         SELECT entity_name
+              , pk1_value
+           FROM xxaqv_fnd_atts_doc_table_stg
           WHERE processed_flag = 'IS'
       ) LOOP
          BEGIN
-            ln_invoice_id       := NULL;
-            SELECT invoice_id
-              INTO ln_invoice_id
-              FROM ap_invoices_all
-             WHERE invoice_num = i.invoice_num
-               AND vendor_id      = i.vendor_id
-               AND vendor_site_id  = i.vendor_site_id;
-
+            ln_entity_name       := NULL;
+			ln_pk1_value         := NULL;			
+            SELECT entity_name
+                 , pk1_value
+              INTO ln_entity_name
+			     , ln_pk1_value  
+              FROM fnd_attached_documents
+             WHERE entity_name = i.entity_name
+               AND pk1_value   = i.pk1_value;
+               
             lv_processed_flag   := 'PS';
          EXCEPTION
             WHEN no_data_found THEN
@@ -716,19 +832,11 @@ CREATE OR REPLACE PACKAGE BODY xxaqv_fnd_attachments_pkg AS
          END;
 
          BEGIN
-            UPDATE xxaqv_ap_inv_header_stg
-               SET
-               processed_flag = lv_processed_flag
-             WHERE invoice_num = i.invoice_num
-               AND vendor_id       = i.vendor_id
-               AND vendor_site_id  = i.vendor_site_id
+            UPDATE xxaqv_fnd_atts_doc_table_stg
+               SET processed_flag  = lv_processed_flag
+             WHERE entity_name     = i.entity_name
+               AND pk1_value       = i.pk1_value
                AND processed_flag  = 'IS';
-
-            UPDATE xxaqv_ap_inv_lines_stg
-               SET
-               processed_flag = lv_processed_flag
-             WHERE invoice_id = i.invoice_id
-               AND processed_flag = 'IS';
 
             COMMIT;
          EXCEPTION
@@ -746,60 +854,18 @@ CREATE OR REPLACE PACKAGE BODY xxaqv_fnd_attachments_pkg AS
       IF gv_debug_flag = 'YES' THEN
          xxaqv_conv_cmn_utility_pkg.print_logs('TIE_BACK_STAGING: Update staging tables with error record details.');
       END IF;
-      xxaqv_conv_cmn_utility_pkg.print_logs(
-         ''
-         , 'O'
-      );
-      xxaqv_conv_cmn_utility_pkg.print_logs(
-         'AP Invoices Information Imported/Updated Successfully.'
-         , 'O'
-      );
-      xxaqv_conv_cmn_utility_pkg.print_logs(
-         ''
-         , 'O'
-      );
-      xxaqv_conv_cmn_utility_pkg.print_logs(
-         rpad(
-            'invoice_id'
-            , 30
-         )
-         || rpad(
-            'invoice_amount'
-            , 30
-         )
-         || rpad(
-            'invoice_num'
-            , 30
-         )
-         || rpad(
-            'VENDOR_SITE_id'
-            , 30
-         )
-         || rpad(
-            'source'
-            , 30
-         )
-         || rpad(
-            'invoice_type_lookup_code'
-            , 30
-         )
-         , 'O'
-      );
+      xxaqv_conv_cmn_utility_pkg.print_logs('' , 'O'      );
+      xxaqv_conv_cmn_utility_pkg.print_logs( 'Attachment Imported/Updated Successfully.', 'O' );
+      xxaqv_conv_cmn_utility_pkg.print_logs( '' , 'O' );
+      xxaqv_conv_cmn_utility_pkg.print_logs(  rpad('entity_name', 30 ) || rpad(   'pk1_value' , 30) , 'O' );
 
       FOR j IN (
-         SELECT xaihs.invoice_id
-                , xaihs.invoice_num
-                , xaihs.invoice_amount
-                , xaihs.vendor_site_id
-                , xaihs.source
-                , xaihs.invoice_type_lookup_code
-           FROM xxaqv_ap_inv_header_stg   xaihs
-                , xxaqv_ap_inv_lines_stg    xails
-          WHERE xaihs.processed_flag = 'PS'
-            AND xails.processed_flag  = 'PS'
-            AND xaihs.invoice_id      = xails.invoice_id
+         SELECT xfadts.entity_name
+		      , xfadts.pk1_value
+           FROM xxaqv_fnd_atts_doc_table_stg   xfadts
+          WHERE xfadts.processed_flag = 'PS'
       ) LOOP 
-	  xxaqv_conv_cmn_utility_pkg.print_logs( rpad('invoice_id', 30 ) || rpad( 'invoice_amount' , 30 ) || rpad('invoice_num', 30 ) || rpad('VENDOR_SITE_id', 30 ) || rpad('source', 30 ) || rpad('invoice_type_lookup_code', 30 ) , 'O');
+	  xxaqv_conv_cmn_utility_pkg.print_logs( rpad('entity_name', 30 ) || rpad('pk1_value', 30 ) , 'O');
       END LOOP;
 
       xxaqv_conv_cmn_utility_pkg.print_logs('', 'O');
@@ -827,6 +893,7 @@ PROCEDURE main( errbuf          OUT   VARCHAR2
               , p_attach_type   IN    VARCHAR2
               , p_debug_flag    IN    VARCHAR2
               , p_entity_name   IN    VARCHAR2
+			  , p_pk1_value     IN    VARCHAR2
    ) IS
    
     lv_error_msg    VARCHAR2(4000) := NULL;
@@ -853,6 +920,13 @@ PROCEDURE main( errbuf          OUT   VARCHAR2
     ELSE
          gv_entity_name := p_entity_name;
     END IF;
+	
+	IF p_pk1_value IS NULL 
+    THEN
+         gv_pk1_value := NULL;
+    ELSE
+         gv_pk1_value := p_pk1_value;
+    END IF;
 
     IF p_conv_mode = 'LOAD' 
     THEN
@@ -865,7 +939,7 @@ PROCEDURE main( errbuf          OUT   VARCHAR2
          END IF;
 
         load_staging_data( x_retcode     => l_retcode
-                         , x_err_msg     => lv_err_msg   );
+                         , x_err_msg     => lv_error_msg   );
    
 	ELSIF p_conv_mode = 'VALIDATE' THEN
          IF gv_debug_flag = 'YES' 

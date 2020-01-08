@@ -11,9 +11,29 @@ CREATE OR REPLACE PACKAGE xxaqv_fnd_attachments_pkg AS
 -- * Change History                                                                                               *
 -- * Version     Created By        Creation Date    Comments                                                      *
 -- *--------------------------------------------------------------------------------------------------------------*
--- * 1.0         CTS                21/11/2019     Initial Version                                                *
+-- * 1.0         CTS                07/01/2020     Initial Version                                                *
 -- ****************************************************************************************************************
 
+
+--/*****************************************************************************************************************
+-- * Function  : validate_category_id                                                                             *
+-- * Purpose   : This Function will validate category ID                                                          *
+-- ****************************************************************************************************************/	
+
+   FUNCTION validate_category_id ( p_category_name    IN    VARCHAR2
+                                 , lv_category_id     OUT   VARCHAR2
+                                 , p_error_msg        OUT   VARCHAR2
+   ) RETURN VARCHAR2;
+
+--/*****************************************************************************************************************
+-- * Function  : validate_datatype_id                                                                             *
+-- * Purpose   : This Function will validate payement term                                                         *
+-- ****************************************************************************************************************/	
+
+   FUNCTION validate_datatype_id ( p_datatype_name  IN    VARCHAR2
+                                 , lv_datatype_id   OUT   VARCHAR2
+                                 , p_error_msg      OUT   VARCHAR2
+   ) RETURN VARCHAR2;
 				  
 --/****************************************************************************************************************
 -- * Procedure  : LOAD_STAGING_DATA                                                                               *
@@ -59,5 +79,6 @@ PROCEDURE main( errbuf          OUT   VARCHAR2
               , p_attach_type   IN    VARCHAR2
               , p_debug_flag    IN    VARCHAR2
               , p_entity_name   IN    VARCHAR2
-   );
+			  , p_pk1_value     IN    VARCHAR2
+   ) ;
 END xxaqv_fnd_attachments_pkg;
