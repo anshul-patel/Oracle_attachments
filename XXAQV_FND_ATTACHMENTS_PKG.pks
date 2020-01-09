@@ -16,8 +16,8 @@ CREATE OR REPLACE PACKAGE xxaqv_fnd_attachments_pkg AS
 
 
 --/*****************************************************************************************************************
--- * Function  : validate_category_id                                                                             *
--- * Purpose   : This Function will validate category ID                                                          *
+-- * Function  : validate_category_id                                                                              *
+-- * Purpose   : This Function will validate category ID                                                           *
 -- ****************************************************************************************************************/	
 
    FUNCTION validate_category_id ( p_category_name    IN    VARCHAR2
@@ -26,7 +26,7 @@ CREATE OR REPLACE PACKAGE xxaqv_fnd_attachments_pkg AS
    ) RETURN VARCHAR2;
 
 --/*****************************************************************************************************************
--- * Function  : validate_datatype_id                                                                             *
+-- * Function  : validate_datatype_id                                                                              *
 -- * Purpose   : This Function will validate payement term                                                         *
 -- ****************************************************************************************************************/	
 
@@ -34,16 +34,43 @@ CREATE OR REPLACE PACKAGE xxaqv_fnd_attachments_pkg AS
                                  , lv_datatype_id   OUT   VARCHAR2
                                  , p_error_msg      OUT   VARCHAR2
    ) RETURN VARCHAR2;
-				  
+
+--/*****************************************************************************************************************
+-- * Function  : validate_supplier_pk                                                                              *
+-- * Purpose   : This Function will validate PK1_VALUE for supplier                                                *
+-- *****************************************************************************************************************/	
+
+   FUNCTION validate_supplier_pk ( p_vendor_name    IN    VARCHAR2
+                                 , p_vendor_number  IN    VARCHAR2
+                                 , ln_pk1_value     OUT   VARCHAR2
+                                 , p_error_msg      OUT   VARCHAR2
+   ) RETURN VARCHAR2;
+
+--/*****************************************************************************************************************
+-- * Function  : validate_sup_sites_pk                                                                             *
+-- * Purpose   : This Function will validate PK1_VALUE for supplier                                                *
+-- *****************************************************************************************************************/	
+
+   FUNCTION validate_sup_sites_pk ( p_vendor_number       IN    VARCHAR2
+                                  , p_vendor_site_code    IN    VARCHAR2
+                                  , ln_pk1_value          OUT   VARCHAR2
+                                  , p_error_msg           OUT   VARCHAR2
+   ) RETURN VARCHAR2;   
 --/****************************************************************************************************************
--- * Procedure  : LOAD_STAGING_DATA                                                                               *
--- * Purpose    : This Procedure is used to load the data into staging Table                                      *
+-- * Procedure  : supplier_load_staging_data                                                                      *
+-- * Purpose    : This Procedure is used to load supplier attachment data into staging Table                      *
 -- ****************************************************************************************************************/
 
-   PROCEDURE load_staging_data ( x_retcode       OUT   NUMBER
-                               , x_err_msg       OUT   VARCHAR2  );
-							   
-							   
+   PROCEDURE supplier_load_staging_data ( x_retcode       OUT   NUMBER
+                                        , x_err_msg       OUT   VARCHAR2  );
+                               
+--/****************************************************************************************************************
+-- * Procedure  : sup_sites_load_staging                                                                *
+-- * Purpose    : This Procedure is used to load the supplier site attachment data into staging Table             *
+-- ****************************************************************************************************************/
+
+   PROCEDURE sup_sites_load_staging ( x_retcode       OUT   NUMBER
+                                    , x_err_msg       OUT   VARCHAR2  );   
 --/****************************************************************************************************************
 -- * Procedure : validate_staging_records                                                                         *
 -- * Purpose   : This Procedure validate the records in the staging table.                                        *
@@ -76,9 +103,8 @@ CREATE OR REPLACE PACKAGE xxaqv_fnd_attachments_pkg AS
 PROCEDURE main( errbuf          OUT   VARCHAR2
               , retcode         OUT   VARCHAR2
               , p_conv_mode     IN    VARCHAR2
-              , p_attach_type   IN    VARCHAR2
               , p_debug_flag    IN    VARCHAR2
               , p_entity_name   IN    VARCHAR2
-			  , p_pk1_value     IN    VARCHAR2
+              , p_pk1_value     IN    VARCHAR2
    ) ;
 END xxaqv_fnd_attachments_pkg;
