@@ -17,11 +17,11 @@ CREATE OR REPLACE PACKAGE BODY xxaqv_fnd_attachments_pkg AS
 
    -- Global PLSQL Types
 
-  TYPE gt_xxaqv_fnd_atts_doc_type IS
-    TABLE OF xxaqv.xxaqv_fnd_atts_doc_table_stg%rowtype INDEX BY BINARY_INTEGER;
-	
+  TYPE gt_xxaqv_attach_docs_type IS
+    TABLE OF xxaqv.xxaqv_attach_docs_stg%rowtype INDEX BY BINARY_INTEGER;
+
    -- Global Records
-   gt_xxaqv_fnd_atts_doc_tab     gt_xxaqv_fnd_atts_doc_type;
+   gt_xxaqv_attach_docs_tab     gt_xxaqv_attach_docs_type;
 
 
   /* Global Variables
@@ -86,7 +86,7 @@ CREATE OR REPLACE PACKAGE BODY xxaqv_fnd_attachments_pkg AS
               INTO lv_datatype_id
               FROM fnd_document_datatypes
              WHERE upper(trim(name)) = upper(trim(p_datatype_name));
-			 
+             
          EXCEPTION
             WHEN OTHERS THEN
                p_error_msg := 'Datatype ID not found in the system; ';
@@ -106,8 +106,8 @@ CREATE OR REPLACE PACKAGE BODY xxaqv_fnd_attachments_pkg AS
 -- * Purpose   : This Function will validate PK1_VALUE for supplier                                                *
 -- *****************************************************************************************************************/	
 
-   FUNCTION validate_supplier_pk ( p_vendor_name    IN    VARCHAR2
-                                 , p_vendor_number  IN    VARCHAR2
+   FUNCTION validate_supplier_pk ( p_vendor_number  IN    VARCHAR2
+                                 , p_vendor_name    IN    VARCHAR2
                                  , ln_pk1_value     OUT   VARCHAR2
                                  , p_error_msg      OUT   VARCHAR2
    ) RETURN VARCHAR2 IS
@@ -122,7 +122,7 @@ CREATE OR REPLACE PACKAGE BODY xxaqv_fnd_attachments_pkg AS
               FROM ap_suppliers
              WHERE upper(trim(vendor_name)) = upper(trim(p_vendor_name))
                AND segment1 = p_vendor_number;
-			 
+ 
          EXCEPTION
             WHEN OTHERS THEN
                p_error_msg := 'Vendor ID not found in the system; ';
@@ -161,7 +161,7 @@ CREATE OR REPLACE PACKAGE BODY xxaqv_fnd_attachments_pkg AS
              WHERE asa.vendor_id         = assa.vendor_id
                AND asa.segment1          = p_vendor_number
                AND assa.vendor_site_code = p_vendor_site_code;
-			 
+
          EXCEPTION
             WHEN OTHERS THEN
                p_error_msg := 'Vendor site_ID not found in the system; ';
@@ -193,7 +193,10 @@ CREATE OR REPLACE PACKAGE BODY xxaqv_fnd_attachments_pkg AS
            , aps.vendor_name   vendor_name
            , fad.entity_name   entity_name
            , fdt.description   document_description
-           , fdst.short_text   text
+           , regexp_replace(fdst.short_text
+             , '[^[!-~]]*'
+             , ' '
+                  )	           text
            , NULL              file_name
            , NULL              url
            , NULL              function_name
@@ -271,7 +274,7 @@ CREATE OR REPLACE PACKAGE BODY xxaqv_fnd_attachments_pkg AS
       CURSOR cur_url IS
       SELECT fad.seq_num       sequence_num
            , fdt.description   document_description
-		   , aps.segment1      vendor_number
+           , aps.segment1      vendor_number
            , aps.vendor_name   vendor_name
            , fad.entity_name   entity_name
            , null              text
@@ -306,38 +309,61 @@ CREATE OR REPLACE PACKAGE BODY xxaqv_fnd_attachments_pkg AS
          
  -- This Cursor is used to retrieve information about File Attachments. --
 
-      /*CURSOR cur_file IS
-      SELECT fad.entity_name
-           , fad.seq_num
-           , fdt.title
-           , fdct.user_name   category
-           , fdd.user_name    type_data
-           , NULL short_text
-           , NULL long_text
-           , NULL url
-           , fl.file_name
-        FROM fnd_attached_documents@xxaqv_conv_cmn_dblink       fad
-           , fnd_documents@xxaqv_conv_cmn_dblink                fd
-           , fnd_documents_tl@xxaqv_conv_cmn_dblink             fdt
-           , fnd_lobs@xxaqv_conv_cmn_dblink                     fl
-           , fnd_document_datatypes@xxaqv_conv_cmn_dblink       fdd
-           , fnd_document_categories_tl@xxaqv_conv_cmn_dblink   fdct
-       WHERE fad.document_id  = fd.document_id
-         AND fd.media_id      = fl.file_id
-         AND fd.document_id   = fdt.document_id
-         AND fd.datatype_id   = fdd.datatype_id
-         AND fd.category_id   = fdct.category_id
-         AND fdd.user_name    = 'File'
-         AND fad.entity_name = nvl(gv_entity_name,fad.entity_name); -- passing Entity Name*/
-
+      CURSOR cur_file IS
+      SELECT fad.pk1_value          pk1_value
+           , fad.entity_name        entity_name
+           , fl.file_id             file_id
+           , fl.file_name           file_name
+           , fad.seq_num            sequence_num
+           , aps.segment1           vendor_number
+           , aps.vendor_name        vendor_name
+           , fdd.name               datatype_name
+           , fl.upload_date         upload_date
+           , fl.file_content_type   file_content_type
+           , fl.expiration_date     expiration_date
+           , fl.program_name        program_name
+           , fl.language            language
+           , fl.oracle_charset      oracle_charset
+           , fl.file_format         file_format
+           , fdc.name               category_name
+           , fdt.description        document_description
+        FROM fnd_lobs@xxaqv_conv_cmn_dblink                  fl
+           , fnd_documents@xxaqv_conv_cmn_dblink             fd
+           , fnd_attached_documents@xxaqv_conv_cmn_dblink    fad
+           , fnd_document_datatypes@xxaqv_conv_cmn_dblink    fdd
+           , ap_suppliers@xxaqv_conv_cmn_dblink              aps
+           , fnd_document_categories@xxaqv_conv_cmn_dblink   fdc
+           , fnd_documents_tl@xxaqv_conv_cmn_dblink          fdt
+       WHERE fl.file_id      = fd.media_id
+         AND aps.vendor_id   = fad.pk1_value
+         AND fad.entity_name = 'PO_VENDORS'                        -- entity name
+         AND fdd.name        = 'FILE'
+         AND fad.document_id = fd.document_id
+         AND fd.datatype_id  = fdd.datatype_id
+         AND fad.category_id = fdc.category_id (+)
+         AND fdt.document_id = fd.document_id
+	     AND fad.pk1_value   = nvl(gv_pk1_value,fad.pk1_value)     -- passing PK1_VALUE
+         AND EXISTS ( SELECT 1
+                        FROM ap_suppliers apt
+                       WHERE apt.segment1 = aps.segment1
+                         AND apt.vendor_name = aps.vendor_name    );
+        
+  
+		  CURSOR cur_file_data 
+		  IS
+		  SELECT file_id
+		    FROM xxaqv_attach_docs_stg
+		   WHERE datatype_name = 'FILE'
+		     AND entity_name   = 'PO_VENDORS'
+			 AND pk1_value     = nvl(gv_pk1_value,pk1_value);
     
      -- LOCAL VARIABLES
-      ln_line_count    BINARY_INTEGER := 0;
+      ln_line_count    BINARY_INTEGER := 1;
       ln_error_count   NUMBER         := 0;
       ex_dml_errors    EXCEPTION;
       PRAGMA exception_init ( ex_dml_errors, -24381 );
-	  
-	  --INSERTING INTO STAGING TABLE
+      
+  --INSERTING INTO STAGING TABLE
    BEGIN
    --Output
       xxaqv_conv_cmn_utility_pkg.print_logs('********************************** Staging Table Load Report *****************************************','O');
@@ -346,62 +372,310 @@ CREATE OR REPLACE PACKAGE BODY xxaqv_fnd_attachments_pkg AS
       xxaqv_conv_cmn_utility_pkg.print_logs(         ''         , 'O'      );
       xxaqv_conv_cmn_utility_pkg.print_logs('******************************************************************************************************', 'O');
      
-	 --LOGS
-	 IF gv_debug_flag = 'YES' 
+     --LOGS
+     IF gv_debug_flag = 'YES' 
      THEN
-	  xxaqv_conv_cmn_utility_pkg.print_logs('********************************** Staging Table Load Report *****************************************');
+      xxaqv_conv_cmn_utility_pkg.print_logs('********************************** Staging Table Load Report *****************************************');
       xxaqv_conv_cmn_utility_pkg.print_logs('');
       xxaqv_conv_cmn_utility_pkg.print_logs(rpad( 'Date:' , 30      )|| rpad(  sysdate  , 30      ));
       xxaqv_conv_cmn_utility_pkg.print_logs('');
       xxaqv_conv_cmn_utility_pkg.print_logs('******************************************************************************************************');
      END IF;
-	
-	
-	FOR i IN cur_short
-	LOOP
-	 ln_line_count                                                            := ln_line_count + 1;
-     gt_xxaqv_fnd_atts_doc_tab(ln_line_count).pk1_value                       := i.pk1_value;
-     gt_xxaqv_fnd_atts_doc_tab(ln_line_count).entity_name                     := i.entity_name;             
-     gt_xxaqv_fnd_atts_doc_tab(ln_line_count).seq_num                         := i.sequence_num;                
-     --gt_xxaqv_fnd_atts_doc_tab(ln_line_count).title                           := i.title;                   
-     gt_xxaqv_fnd_atts_doc_tab(ln_line_count).category_name                   := i.category_name;               
-     gt_xxaqv_fnd_atts_doc_tab(ln_line_count).datatype_name                   := i.datatype_name;           
-     gt_xxaqv_fnd_atts_doc_tab(ln_line_count).document_description            := i.document_description;    
-     gt_xxaqv_fnd_atts_doc_tab(ln_line_count).text                            := i.text;                   
-     gt_xxaqv_fnd_atts_doc_tab(ln_line_count).url                             := i.url;                   
-     gt_xxaqv_fnd_atts_doc_tab(ln_line_count).file_name                       := i.file_name;              
-     gt_xxaqv_fnd_atts_doc_tab(ln_line_count).creation_date                   := SYSDATE;        
-     gt_xxaqv_fnd_atts_doc_tab(ln_line_count).last_update_date                := SYSDATE;       
-     gt_xxaqv_fnd_atts_doc_tab(ln_line_count).last_update_login               := gv_login_id;      
-     gt_xxaqv_fnd_atts_doc_tab(ln_line_count).last_updated_by                 := gv_user_id;       
-     gt_xxaqv_fnd_atts_doc_tab(ln_line_count).created_by                      := gv_user_id;            
-     gt_xxaqv_fnd_atts_doc_tab(ln_line_count).processed_flag                  := 'LS';
-	 gt_xxaqv_fnd_atts_doc_tab(ln_line_count).pk2_value                       := i.pk2_value;
-	 gt_xxaqv_fnd_atts_doc_tab(ln_line_count).pk3_value                       := i.pk3_value;
-	 gt_xxaqv_fnd_atts_doc_tab(ln_line_count).pk4_value                       := i.pk4_value;
-	 gt_xxaqv_fnd_atts_doc_tab(ln_line_count).pk5_value                       := i.pk5_value;
-	 gt_xxaqv_fnd_atts_doc_tab(ln_line_count).vendor_name                     := i.vendor_name;
-	 gt_xxaqv_fnd_atts_doc_tab(ln_line_count).vendor_number                   := i.vendor_number;
-     
-	 END LOOP;
-	 BEGIN
-          FORALL i IN gt_xxaqv_fnd_atts_doc_tab.first..gt_xxaqv_fnd_atts_doc_tab.last SAVE EXCEPTIONS
-            INSERT INTO xxaqv.xxaqv_fnd_atts_doc_table_stg VALUES gt_xxaqv_fnd_atts_doc_tab ( i );
+    
 
-            xxaqv_conv_cmn_utility_pkg.print_logs('LODA_DATA: xxaqv_fnd_atts_doc_table_stg: Records loaded sucessfully: ' || SQL%rowcount, 'O' );
-            xxaqv_conv_cmn_utility_pkg.print_logs('LODA_DATA: xxaqv_fnd_atts_doc_table_stg: Records loaded sucessfully: ' || SQL%rowcount);
+    gt_xxaqv_attach_docs_tab.delete;
+    
+    FOR i IN cur_short
+    LOOP
+     xxaqv_conv_cmn_utility_pkg.print_logs(i.pk1_value|| 'short');	 
+     
+     gt_xxaqv_attach_docs_tab(ln_line_count).pk1_value                       := i.pk1_value;
+     gt_xxaqv_attach_docs_tab(ln_line_count).entity_name                     := i.entity_name;             
+     gt_xxaqv_attach_docs_tab(ln_line_count).seq_num                         := i.sequence_num;                
+     --gt_xxaqv_attach_docs_tab(ln_line_count).title                           := i.title;                   
+     gt_xxaqv_attach_docs_tab(ln_line_count).category_name                   := i.category_name;               
+     gt_xxaqv_attach_docs_tab(ln_line_count).datatype_name                   := i.datatype_name;           
+     gt_xxaqv_attach_docs_tab(ln_line_count).document_description            := i.document_description;    
+     gt_xxaqv_attach_docs_tab(ln_line_count).text                            := i.text;                   
+     gt_xxaqv_attach_docs_tab(ln_line_count).url                             := i.url;                   
+     gt_xxaqv_attach_docs_tab(ln_line_count).file_name                       := i.file_name;              
+     gt_xxaqv_attach_docs_tab(ln_line_count).creation_date                   := SYSDATE;        
+     gt_xxaqv_attach_docs_tab(ln_line_count).last_update_date                := SYSDATE;       
+     gt_xxaqv_attach_docs_tab(ln_line_count).last_update_login               := gv_login_id;      
+     gt_xxaqv_attach_docs_tab(ln_line_count).last_updated_by                 := gv_user_id;       
+     gt_xxaqv_attach_docs_tab(ln_line_count).created_by                      := gv_user_id;            
+     gt_xxaqv_attach_docs_tab(ln_line_count).processed_flag                  := 'LS';
+     gt_xxaqv_attach_docs_tab(ln_line_count).pk2_value                       := i.pk2_value;
+     gt_xxaqv_attach_docs_tab(ln_line_count).pk3_value                       := i.pk3_value;
+     gt_xxaqv_attach_docs_tab(ln_line_count).pk4_value                       := i.pk4_value;
+     gt_xxaqv_attach_docs_tab(ln_line_count).pk5_value                       := i.pk5_value;
+     gt_xxaqv_attach_docs_tab(ln_line_count).vendor_name                     := i.vendor_name;
+     gt_xxaqv_attach_docs_tab(ln_line_count).vendor_number                   := i.vendor_number;
+     ln_line_count                                                            := ln_line_count + 1;
+     xxaqv_conv_cmn_utility_pkg.print_logs(i.pk1_value|| 'end_short');
+     END LOOP;
+     BEGIN
+          FORALL i IN gt_xxaqv_attach_docs_tab.first..gt_xxaqv_attach_docs_tab.last SAVE EXCEPTIONS
+            INSERT INTO xxaqv.xxaqv_attach_docs_stg VALUES gt_xxaqv_attach_docs_tab ( i );
+
+            xxaqv_conv_cmn_utility_pkg.print_logs('LODA_DATA: xxaqv_attach_docs_stg: Records loaded sucessfully: ' || SQL%rowcount, 'O' );
+            xxaqv_conv_cmn_utility_pkg.print_logs('LODA_DATA: xxaqv_attach_docs_stg: Records loaded sucessfully: ' || SQL%rowcount);
+          COMMIT;
+          
+         EXCEPTION
+            WHEN ex_dml_errors 
+            THEN
+               x_retcode        := 1;
+               ln_error_count   := SQL%bulk_exceptions.count;
+               xxaqv_conv_cmn_utility_pkg.print_logs('LOAD_DATA: xxaqv_attach_docs_stg: Number of failures: ' || ln_error_count, 'O' );
+               xxaqv_conv_cmn_utility_pkg.print_logs('LOAD_DATA: xxaqv_attach_docs_stg: Number of failures: ' || ln_error_count);
+               FOR i IN 1..ln_error_count 
+               LOOP 
+               xxaqv_conv_cmn_utility_pkg.print_logs('LOAD_DATA: xxaqv_attach_docs_stg: Error: '
+                  || i
+                  || 'Array Index: '
+                  || SQL%bulk_exceptions(i).error_index
+                  || 'Message: '
+                  || sqlerrm(-SQL%bulk_exceptions(i).error_code) , 'O');
+               END LOOP;
+            
+            WHEN OTHERS 
+            THEN
+               x_retcode   := 1;
+               x_err_msg   := 'LOAD_DATA: Unexpected error while populating data in xxaqv_attach_docs_stg.'
+                            || to_char(sqlcode)
+                            || '-'
+                            || sqlerrm;
+         END;
+
+
+     gt_xxaqv_attach_docs_tab.delete;
+
+    FOR j IN cur_long
+    LOOP
+     
+         xxaqv_conv_cmn_utility_pkg.print_logs(j.pk1_value|| 'long');
+
+
+     gt_xxaqv_attach_docs_tab(ln_line_count).pk1_value                       := j.pk1_value;
+     gt_xxaqv_attach_docs_tab(ln_line_count).entity_name                     := j.entity_name;             
+     gt_xxaqv_attach_docs_tab(ln_line_count).seq_num                         := j.sequence_num;                
+     --gt_xxaqv_attach_docs_tab(ln_line_count).title                           := i.title;                   
+     gt_xxaqv_attach_docs_tab(ln_line_count).category_name                   := j.category_name;               
+     gt_xxaqv_attach_docs_tab(ln_line_count).datatype_name                   := j.datatype_name;           
+     gt_xxaqv_attach_docs_tab(ln_line_count).document_description            := j.document_description;    
+     gt_xxaqv_attach_docs_tab(ln_line_count).text                            := j.text;                   
+     gt_xxaqv_attach_docs_tab(ln_line_count).url                             := j.url;                   
+     gt_xxaqv_attach_docs_tab(ln_line_count).file_name                       := j.file_name;              
+     gt_xxaqv_attach_docs_tab(ln_line_count).creation_date                   := SYSDATE;        
+     gt_xxaqv_attach_docs_tab(ln_line_count).last_update_date                := SYSDATE;       
+     gt_xxaqv_attach_docs_tab(ln_line_count).last_update_login               := gv_login_id;      
+     gt_xxaqv_attach_docs_tab(ln_line_count).last_updated_by                 := gv_user_id;       
+     gt_xxaqv_attach_docs_tab(ln_line_count).created_by                      := gv_user_id;            
+     gt_xxaqv_attach_docs_tab(ln_line_count).processed_flag                  := 'LS';
+     gt_xxaqv_attach_docs_tab(ln_line_count).pk2_value                       := j.pk2_value;
+     gt_xxaqv_attach_docs_tab(ln_line_count).pk3_value                       := j.pk3_value;
+     gt_xxaqv_attach_docs_tab(ln_line_count).pk4_value                       := j.pk4_value;
+     gt_xxaqv_attach_docs_tab(ln_line_count).pk5_value                       := j.pk5_value;
+     gt_xxaqv_attach_docs_tab(ln_line_count).vendor_name                     := j.vendor_name;
+     gt_xxaqv_attach_docs_tab(ln_line_count).vendor_number                   := j.vendor_number;
+     xxaqv_conv_cmn_utility_pkg.print_logs(j.pk1_value|| 'end_long');
+      ln_line_count                                                            := ln_line_count + 1;
+     END LOOP;
+     BEGIN
+    
+          FORALL j IN gt_xxaqv_attach_docs_tab.first..gt_xxaqv_attach_docs_tab.last SAVE EXCEPTIONS
+            INSERT INTO xxaqv.xxaqv_attach_docs_stg VALUES gt_xxaqv_attach_docs_tab ( j );
+
+            xxaqv_conv_cmn_utility_pkg.print_logs('LODA_DATA: xxaqv_attach_docs_stg: Records loaded sucessfully: ' || SQL%rowcount, 'O' );
+            xxaqv_conv_cmn_utility_pkg.print_logs('LODA_DATA: xxaqv_attach_docs_stg: Records loaded sucessfully: ' || SQL%rowcount);
+          COMMIT;
+         EXCEPTION
+            WHEN ex_dml_errors 
+            THEN
+               x_retcode        := 1;
+               ln_error_count   := SQL%bulk_exceptions.count;
+               xxaqv_conv_cmn_utility_pkg.print_logs('LOAD_DATA: xxaqv_attach_docs_stg: Number of failures: ' || ln_error_count, 'O' );
+               xxaqv_conv_cmn_utility_pkg.print_logs('LOAD_DATA: xxaqv_attach_docs_stg: Number of failures: ' || ln_error_count);
+               FOR i IN 1..ln_error_count 
+               LOOP 
+               xxaqv_conv_cmn_utility_pkg.print_logs('LOAD_DATA: xxaqv_attach_docs_stg: Error: '
+                  || i
+                  || 'Array Index: '
+                  || SQL%bulk_exceptions(i).error_index
+                  || 'Message: '
+                  || sqlerrm(-SQL%bulk_exceptions(i).error_code) , 'O');
+               END LOOP;
+        
+            WHEN OTHERS 
+        	THEN
+               x_retcode   := 1;
+               x_err_msg   := 'LOAD_DATA: Unexpected error while populating data in xxaqv_attach_docs_stg.'
+                            || to_char(sqlcode)
+                            || '-'
+                            || sqlerrm;
+         END;
+	
+
+    gt_xxaqv_attach_docs_tab.delete;
+
+    FOR z IN cur_url
+    LOOP
+    	 xxaqv_conv_cmn_utility_pkg.print_logs(z.pk1_value || 'url');
+     
+     gt_xxaqv_attach_docs_tab(ln_line_count).pk1_value                       := z.pk1_value;
+     gt_xxaqv_attach_docs_tab(ln_line_count).entity_name                     := z.entity_name;             
+     gt_xxaqv_attach_docs_tab(ln_line_count).seq_num                         := z.sequence_num;                
+    -- gt_xxaqv_attach_docs_tab(ln_line_count).title                           := i.title;                   
+     gt_xxaqv_attach_docs_tab(ln_line_count).category_name                   := z.category_name;               
+     gt_xxaqv_attach_docs_tab(ln_line_count).datatype_name                   := z.datatype_name;           
+     gt_xxaqv_attach_docs_tab(ln_line_count).document_description            := z.document_description;    
+     gt_xxaqv_attach_docs_tab(ln_line_count).text                            := z.text;                   
+     gt_xxaqv_attach_docs_tab(ln_line_count).url                             := z.url;                   
+     gt_xxaqv_attach_docs_tab(ln_line_count).file_name                       := z.file_name;              
+     gt_xxaqv_attach_docs_tab(ln_line_count).creation_date                   := SYSDATE;        
+     gt_xxaqv_attach_docs_tab(ln_line_count).last_update_date                := SYSDATE;       
+     gt_xxaqv_attach_docs_tab(ln_line_count).last_update_login               := gv_login_id;      
+     gt_xxaqv_attach_docs_tab(ln_line_count).last_updated_by                 := gv_user_id;       
+     gt_xxaqv_attach_docs_tab(ln_line_count).created_by                      := gv_user_id;            
+     gt_xxaqv_attach_docs_tab(ln_line_count).processed_flag                  := 'LS';
+     gt_xxaqv_attach_docs_tab(ln_line_count).pk2_value                       := z.pk2_value;
+     gt_xxaqv_attach_docs_tab(ln_line_count).pk3_value                       := z.pk3_value;
+     gt_xxaqv_attach_docs_tab(ln_line_count).pk4_value                       := z.pk4_value;
+     gt_xxaqv_attach_docs_tab(ln_line_count).pk5_value                       := z.pk5_value;
+     gt_xxaqv_attach_docs_tab(ln_line_count).vendor_name                     := z.vendor_name;
+     gt_xxaqv_attach_docs_tab(ln_line_count).vendor_number                   := z.vendor_number;
+     ln_line_count                                                            := ln_line_count + 1;
+     END LOOP;
+     BEGIN
+          FORALL z IN gt_xxaqv_attach_docs_tab.first..gt_xxaqv_attach_docs_tab.last SAVE EXCEPTIONS
+            INSERT INTO xxaqv.xxaqv_attach_docs_stg VALUES gt_xxaqv_attach_docs_tab ( z );
+
+            xxaqv_conv_cmn_utility_pkg.print_logs('LODA_DATA: xxaqv_attach_docs_stg: Records loaded sucessfully: ' || SQL%rowcount, 'O' );
+            xxaqv_conv_cmn_utility_pkg.print_logs('LODA_DATA: xxaqv_attach_docs_stg: Records loaded sucessfully: ' || SQL%rowcount);
+          COMMIT;
+         EXCEPTION
+            WHEN ex_dml_errors 
+            THEN
+               x_retcode        := 1;
+               ln_error_count   := SQL%bulk_exceptions.count;
+               xxaqv_conv_cmn_utility_pkg.print_logs('LOAD_DATA: xxaqv_attach_docs_stg: Number of failures: ' || ln_error_count, 'O' );
+               xxaqv_conv_cmn_utility_pkg.print_logs('LOAD_DATA: xxaqv_attach_docs_stg: Number of failures: ' || ln_error_count);
+               FOR i IN 1..ln_error_count 
+               LOOP 
+               xxaqv_conv_cmn_utility_pkg.print_logs('LOAD_DATA: xxaqv_attach_docs_stg: Error: '
+                  || i
+                  || 'Array Index: '
+                  || SQL%bulk_exceptions(i).error_index
+                  || 'Message: '
+                  || sqlerrm(-SQL%bulk_exceptions(i).error_code) , 'O');
+               END LOOP;
+        
+            WHEN OTHERS 
+        	THEN
+               x_retcode   := 1;
+               x_err_msg   := 'LOAD_DATA: Unexpected error while populating data in xxaqv_attach_docs_stg.'
+                            || to_char(sqlcode)
+                            || '-'
+                            || sqlerrm;
+         END;
+    
+    gt_xxaqv_attach_docs_tab.delete;
+    
+    FOR m IN cur_file 
+    LOOP
+     ln_line_count                                                            := ln_line_count + 1;
+     gt_xxaqv_attach_docs_tab(ln_line_count).pk1_value                       := m.pk1_value;
+     gt_xxaqv_attach_docs_tab(ln_line_count).entity_name                     := m.entity_name;             
+     gt_xxaqv_attach_docs_tab(ln_line_count).seq_num                         := m.sequence_num;                
+     --gt_xxaqv_attach_docs_tab(ln_line_count).title                           := i.title;                   
+     gt_xxaqv_attach_docs_tab(ln_line_count).category_name                   := m.category_name;               
+     gt_xxaqv_attach_docs_tab(ln_line_count).datatype_name                   := m.datatype_name;           
+     gt_xxaqv_attach_docs_tab(ln_line_count).document_description            := m.document_description;    
+     gt_xxaqv_attach_docs_tab(ln_line_count).file_id                         := m.file_id;
+     gt_xxaqv_attach_docs_tab(ln_line_count).upload_date                     := m.upload_date;
+     gt_xxaqv_attach_docs_tab(ln_line_count).file_name                       := m.file_name;              
+     gt_xxaqv_attach_docs_tab(ln_line_count).creation_date                   := SYSDATE;        
+     gt_xxaqv_attach_docs_tab(ln_line_count).last_update_date                := SYSDATE;       
+     gt_xxaqv_attach_docs_tab(ln_line_count).last_update_login               := gv_login_id;      
+     gt_xxaqv_attach_docs_tab(ln_line_count).last_updated_by                 := gv_user_id;       
+     gt_xxaqv_attach_docs_tab(ln_line_count).created_by                      := gv_user_id;            
+     gt_xxaqv_attach_docs_tab(ln_line_count).processed_flag                  := 'LS';
+    /* gt_xxaqv_attach_docs_tab(ln_line_count).pk2_value                       := m.pk2_value;
+     gt_xxaqv_attach_docs_tab(ln_line_count).pk3_value                       := m.pk3_value;
+     gt_xxaqv_attach_docs_tab(ln_line_count).pk4_value                       := m.pk4_value;
+     gt_xxaqv_attach_docs_tab(ln_line_count).pk5_value                       := m.pk5_value;*/
+	 gt_xxaqv_attach_docs_tab(ln_line_count).file_content_type               := m.file_content_type;
+	 gt_xxaqv_attach_docs_tab(ln_line_count).expiration_date                 := m.expiration_date;
+	 gt_xxaqv_attach_docs_tab(ln_line_count).program_name                    := m.program_name;
+	 gt_xxaqv_attach_docs_tab(ln_line_count).language                        := m.language;
+	 gt_xxaqv_attach_docs_tab(ln_line_count).oracle_charset                  := m.oracle_charset;
+     gt_xxaqv_attach_docs_tab(ln_line_count).file_format                     := m.file_format;
+	 gt_xxaqv_attach_docs_tab(ln_line_count).vendor_name                     := m.vendor_name;
+     gt_xxaqv_attach_docs_tab(ln_line_count).vendor_number                   := m.vendor_number;
+	 
+     END LOOP;
+     BEGIN
+          FORALL m IN gt_xxaqv_attach_docs_tab.first..gt_xxaqv_attach_docs_tab.last SAVE EXCEPTIONS
+            INSERT INTO xxaqv.xxaqv_attach_docs_stg VALUES gt_xxaqv_attach_docs_tab ( m );
+
+            xxaqv_conv_cmn_utility_pkg.print_logs('LODA_DATA: xxaqv_attach_docs_stg: Records loaded sucessfully: ' || SQL%rowcount, 'O' );
+            xxaqv_conv_cmn_utility_pkg.print_logs('LODA_DATA: xxaqv_attach_docs_stg: Records loaded sucessfully: ' || SQL%rowcount);
           COMMIT;
 		  
-         EXCEPTION
-            WHEN ex_dml_errors 
-			THEN
+		  --inserting lob data
+		  BEGIN
+		
+		   
+		   FOR r_cur_file_data IN cur_file_data
+		   LOOP
+              
+			  UPDATE xxaqv_attach_docs_stg xads
+                 SET xads.file_data = ( SELECT file_data
+                                          FROM fnd_lobs@xxaqv_conv_cmn_dblink fl
+                                         WHERE r_cur_file_data.file_id = fl.file_id       )
+               WHERE xads.file_id = r_cur_file_data.file_id 
+			     AND xads.datatype_name = 'FILE'
+				 AND xads.entity_name   = 'PO_VENDORS'; 
+				 COMMIT;
+		  END LOOP;
+		  
+		 
+		 EXCEPTION 
+          WHEN ex_dml_errors 
+            THEN
                x_retcode        := 1;
                ln_error_count   := SQL%bulk_exceptions.count;
-               xxaqv_conv_cmn_utility_pkg.print_logs('LOAD_DATA: xxaqv_fnd_atts_doc_table_stg: Number of failures: ' || ln_error_count, 'O' );
-               xxaqv_conv_cmn_utility_pkg.print_logs('LOAD_DATA: xxaqv_fnd_atts_doc_table_stg: Number of failures: ' || ln_error_count);
+               xxaqv_conv_cmn_utility_pkg.print_logs('LOAD_DATA: xxaqv_attach_docs_stg: Number of failures: ' || ln_error_count, 'O' );
+               xxaqv_conv_cmn_utility_pkg.print_logs('LOAD_DATA: xxaqv_attach_docs_stg: Number of failures: ' || ln_error_count);
                FOR i IN 1..ln_error_count 
-			   LOOP 
-			   xxaqv_conv_cmn_utility_pkg.print_logs('LOAD_DATA: xxaqv_fnd_atts_doc_table_stg: Error: '
+               LOOP 
+               xxaqv_conv_cmn_utility_pkg.print_logs('LOAD_DATA: xxaqv_attach_docs_stg: Error: '
+                  || i
+                  || 'Array Index: '
+                  || SQL%bulk_exceptions(i).error_index
+                  || 'Message: '
+                  || sqlerrm(-SQL%bulk_exceptions(i).error_code) , 'O');
+               END LOOP;		  
+		  WHEN OTHERS 
+                 THEN
+                    x_retcode   := 1;
+                    x_err_msg   := 'LOAD_DATA: Unexpected error while populating data in xxaqv_attach_docs_stg.'
+                                 || to_char(sqlcode)
+                                 || '-'
+                                 || sqlerrm;
+		  END;
+         
+		 EXCEPTION
+            WHEN ex_dml_errors 
+            THEN
+               x_retcode        := 1;
+               ln_error_count   := SQL%bulk_exceptions.count;
+               xxaqv_conv_cmn_utility_pkg.print_logs('LOAD_DATA: xxaqv_attach_docs_stg: Number of failures: ' || ln_error_count, 'O' );
+               xxaqv_conv_cmn_utility_pkg.print_logs('LOAD_DATA: xxaqv_attach_docs_stg: Number of failures: ' || ln_error_count);
+               FOR i IN 1..ln_error_count 
+               LOOP 
+               xxaqv_conv_cmn_utility_pkg.print_logs('LOAD_DATA: xxaqv_attach_docs_stg: Error: '
                   || i
                   || 'Array Index: '
                   || SQL%bulk_exceptions(i).error_index
@@ -410,200 +684,19 @@ CREATE OR REPLACE PACKAGE BODY xxaqv_fnd_attachments_pkg AS
                END LOOP;
 
             WHEN OTHERS 
-			THEN
+            THEN
                x_retcode   := 1;
-               x_err_msg   := 'LOAD_DATA: Unexpected error while populating data in xxaqv_fnd_atts_doc_table_stg.'
+               x_err_msg   := 'LOAD_DATA: Unexpected error while populating data in xxaqv_attach_docs_stg.'
                             || to_char(sqlcode)
                             || '-'
                             || sqlerrm;
          END;
-
-
-	FOR j IN cur_long
-	LOOP
-	 ln_line_count                                                            := ln_line_count + 1;
-     gt_xxaqv_fnd_atts_doc_tab(ln_line_count).pk1_value                       := j.pk1_value;
-     gt_xxaqv_fnd_atts_doc_tab(ln_line_count).entity_name                     := j.entity_name;             
-     gt_xxaqv_fnd_atts_doc_tab(ln_line_count).seq_num                         := j.sequence_num;                
-     --gt_xxaqv_fnd_atts_doc_tab(ln_line_count).title                           := i.title;                   
-     gt_xxaqv_fnd_atts_doc_tab(ln_line_count).category_name                   := j.category_name;               
-     gt_xxaqv_fnd_atts_doc_tab(ln_line_count).datatype_name                   := j.datatype_name;           
-     gt_xxaqv_fnd_atts_doc_tab(ln_line_count).document_description            := j.document_description;    
-     gt_xxaqv_fnd_atts_doc_tab(ln_line_count).text                            := j.text;                   
-     gt_xxaqv_fnd_atts_doc_tab(ln_line_count).url                             := j.url;                   
-     gt_xxaqv_fnd_atts_doc_tab(ln_line_count).file_name                       := j.file_name;              
-     gt_xxaqv_fnd_atts_doc_tab(ln_line_count).creation_date                   := SYSDATE;        
-     gt_xxaqv_fnd_atts_doc_tab(ln_line_count).last_update_date                := SYSDATE;       
-     gt_xxaqv_fnd_atts_doc_tab(ln_line_count).last_update_login               := gv_login_id;      
-     gt_xxaqv_fnd_atts_doc_tab(ln_line_count).last_updated_by                 := gv_user_id;       
-     gt_xxaqv_fnd_atts_doc_tab(ln_line_count).created_by                      := gv_user_id;            
-     gt_xxaqv_fnd_atts_doc_tab(ln_line_count).processed_flag                  := 'LS';
-	 gt_xxaqv_fnd_atts_doc_tab(ln_line_count).pk2_value                       := j.pk2_value;
-	 gt_xxaqv_fnd_atts_doc_tab(ln_line_count).pk3_value                       := j.pk3_value;
-	 gt_xxaqv_fnd_atts_doc_tab(ln_line_count).pk4_value                       := j.pk4_value;
-	 gt_xxaqv_fnd_atts_doc_tab(ln_line_count).pk5_value                       := j.pk5_value;
-	 gt_xxaqv_fnd_atts_doc_tab(ln_line_count).vendor_name                     := j.vendor_name;
-	 gt_xxaqv_fnd_atts_doc_tab(ln_line_count).vendor_number                   := j.vendor_number;
-     
-	 END LOOP;
-	 BEGIN
-          FORALL j IN gt_xxaqv_fnd_atts_doc_tab.first..gt_xxaqv_fnd_atts_doc_tab.last SAVE EXCEPTIONS
-            INSERT INTO xxaqv.xxaqv_fnd_atts_doc_table_stg VALUES gt_xxaqv_fnd_atts_doc_tab ( j );
-
-            xxaqv_conv_cmn_utility_pkg.print_logs('LODA_DATA: xxaqv_fnd_atts_doc_table_stg: Records loaded sucessfully: ' || SQL%rowcount, 'O' );
-            xxaqv_conv_cmn_utility_pkg.print_logs('LODA_DATA: xxaqv_fnd_atts_doc_table_stg: Records loaded sucessfully: ' || SQL%rowcount);
-          COMMIT;
-         EXCEPTION
-            WHEN ex_dml_errors 
-			THEN
-               x_retcode        := 1;
-               ln_error_count   := SQL%bulk_exceptions.count;
-               xxaqv_conv_cmn_utility_pkg.print_logs('LOAD_DATA: xxaqv_fnd_atts_doc_table_stg: Number of failures: ' || ln_error_count, 'O' );
-               xxaqv_conv_cmn_utility_pkg.print_logs('LOAD_DATA: xxaqv_fnd_atts_doc_table_stg: Number of failures: ' || ln_error_count);
-               FOR i IN 1..ln_error_count 
-			   LOOP 
-			   xxaqv_conv_cmn_utility_pkg.print_logs('LOAD_DATA: xxaqv_fnd_atts_doc_table_stg: Error: '
-                  || i
-                  || 'Array Index: '
-                  || SQL%bulk_exceptions(i).error_index
-                  || 'Message: '
-                  || sqlerrm(-SQL%bulk_exceptions(i).error_code) , 'O');
-               END LOOP;
-
-            WHEN OTHERS 
-			THEN
-               x_retcode   := 1;
-               x_err_msg   := 'LOAD_DATA: Unexpected error while populating data in xxaqv_fnd_atts_doc_table_stg.'
-                            || to_char(sqlcode)
-                            || '-'
-                            || sqlerrm;
-         END;
-	
-	FOR k IN cur_url
-	LOOP
-	 ln_line_count                                                            := ln_line_count + 1;
-     gt_xxaqv_fnd_atts_doc_tab(ln_line_count).pk1_value                       := k.pk1_value;
-     gt_xxaqv_fnd_atts_doc_tab(ln_line_count).entity_name                     := k.entity_name;             
-     gt_xxaqv_fnd_atts_doc_tab(ln_line_count).seq_num                         := k.sequence_num;                
-    -- gt_xxaqv_fnd_atts_doc_tab(ln_line_count).title                           := i.title;                   
-     gt_xxaqv_fnd_atts_doc_tab(ln_line_count).category_name                   := k.category_name;               
-     gt_xxaqv_fnd_atts_doc_tab(ln_line_count).datatype_name                   := k.datatype_name;           
-     gt_xxaqv_fnd_atts_doc_tab(ln_line_count).document_description            := k.document_description;    
-     gt_xxaqv_fnd_atts_doc_tab(ln_line_count).text                            := k.text;                   
-     gt_xxaqv_fnd_atts_doc_tab(ln_line_count).url                             := k.url;                   
-     gt_xxaqv_fnd_atts_doc_tab(ln_line_count).file_name                       := k.file_name;              
-     gt_xxaqv_fnd_atts_doc_tab(ln_line_count).creation_date                   := SYSDATE;        
-     gt_xxaqv_fnd_atts_doc_tab(ln_line_count).last_update_date                := SYSDATE;       
-     gt_xxaqv_fnd_atts_doc_tab(ln_line_count).last_update_login               := gv_login_id;      
-     gt_xxaqv_fnd_atts_doc_tab(ln_line_count).last_updated_by                 := gv_user_id;       
-     gt_xxaqv_fnd_atts_doc_tab(ln_line_count).created_by                      := gv_user_id;            
-     gt_xxaqv_fnd_atts_doc_tab(ln_line_count).processed_flag                  := 'LS';
-	 gt_xxaqv_fnd_atts_doc_tab(ln_line_count).pk2_value                       := k.pk2_value;
-	 gt_xxaqv_fnd_atts_doc_tab(ln_line_count).pk3_value                       := k.pk3_value;
-	 gt_xxaqv_fnd_atts_doc_tab(ln_line_count).pk4_value                       := k.pk4_value;
-	 gt_xxaqv_fnd_atts_doc_tab(ln_line_count).pk5_value                       := k.pk5_value;
-	 gt_xxaqv_fnd_atts_doc_tab(ln_line_count).vendor_name                     := k.vendor_name;
-	 gt_xxaqv_fnd_atts_doc_tab(ln_line_count).vendor_number                   := k.vendor_number;
-     
-	 END LOOP;
-	 BEGIN
-          FORALL k IN gt_xxaqv_fnd_atts_doc_tab.first..gt_xxaqv_fnd_atts_doc_tab.last SAVE EXCEPTIONS
-            INSERT INTO xxaqv.xxaqv_fnd_atts_doc_table_stg VALUES gt_xxaqv_fnd_atts_doc_tab ( k );
-
-            xxaqv_conv_cmn_utility_pkg.print_logs('LODA_DATA: xxaqv_fnd_atts_doc_table_stg: Records loaded sucessfully: ' || SQL%rowcount, 'O' );
-            xxaqv_conv_cmn_utility_pkg.print_logs('LODA_DATA: xxaqv_fnd_atts_doc_table_stg: Records loaded sucessfully: ' || SQL%rowcount);
-          COMMIT;
-         EXCEPTION
-            WHEN ex_dml_errors 
-			THEN
-               x_retcode        := 1;
-               ln_error_count   := SQL%bulk_exceptions.count;
-               xxaqv_conv_cmn_utility_pkg.print_logs('LOAD_DATA: xxaqv_fnd_atts_doc_table_stg: Number of failures: ' || ln_error_count, 'O' );
-               xxaqv_conv_cmn_utility_pkg.print_logs('LOAD_DATA: xxaqv_fnd_atts_doc_table_stg: Number of failures: ' || ln_error_count);
-               FOR i IN 1..ln_error_count 
-			   LOOP 
-			   xxaqv_conv_cmn_utility_pkg.print_logs('LOAD_DATA: xxaqv_fnd_atts_doc_table_stg: Error: '
-                  || i
-                  || 'Array Index: '
-                  || SQL%bulk_exceptions(i).error_index
-                  || 'Message: '
-                  || sqlerrm(-SQL%bulk_exceptions(i).error_code) , 'O');
-               END LOOP;
-
-            WHEN OTHERS 
-			THEN
-               x_retcode   := 1;
-               x_err_msg   := 'LOAD_DATA: Unexpected error while populating data in xxaqv_fnd_atts_doc_table_stg.'
-                            || to_char(sqlcode)
-                            || '-'
-                            || sqlerrm;
-         END;
-	
-	/*
-	
-	FOR i IN cur_file 
-	LOOP
-	 ln_line_count                                                            := ln_line_count + 1;
-     gt_xxaqv_fnd_atts_doc_tab(ln_line_count).pk1_value        := i.pk1_value;
-     gt_xxaqv_fnd_atts_doc_tab(ln_line_count).entity_name                     := i.entity_name;             
-     gt_xxaqv_fnd_atts_doc_tab(ln_line_count).seq_num                         := i.sequence_num;                
-     gt_xxaqv_fnd_atts_doc_tab(ln_line_count).title                           := i.title;                   
-     gt_xxaqv_fnd_atts_doc_tab(ln_line_count).category_name                   := i.category_name;               
-     gt_xxaqv_fnd_atts_doc_tab(ln_line_count).datatype_name                   := i.datatype_name;           
-     gt_xxaqv_fnd_atts_doc_tab(ln_line_count).document_description            := i.document_description;    
-     gt_xxaqv_fnd_atts_doc_tab(ln_line_count).text                            := i.text;                   
-     gt_xxaqv_fnd_atts_doc_tab(ln_line_count).url                             := i.url;                   
-     gt_xxaqv_fnd_atts_doc_tab(ln_line_count).file_name                       := i.file_name;              
-     gt_xxaqv_fnd_atts_doc_tab(ln_line_count).creation_date                   := SYSDATE;        
-     gt_xxaqv_fnd_atts_doc_tab(ln_line_count).last_update_date                := SYSDATE;       
-     gt_xxaqv_fnd_atts_doc_tab(ln_line_count).last_update_login               := gv_login_id;      
-     gt_xxaqv_fnd_atts_doc_tab(ln_line_count).last_updated_by                 := gv_user_id;       
-     gt_xxaqv_fnd_atts_doc_tab(ln_line_count).created_by                      := gv_user_id;            
-     gt_xxaqv_fnd_atts_doc_tab(ln_line_count).processed_flag                  := 'LS';
-	 gt_xxaqv_fnd_atts_doc_tab(ln_line_count).pk2_value                       := i.pk2_value;
-	 gt_xxaqv_fnd_atts_doc_tab(ln_line_count).pk3_value                       := i.pk3_value;
-	 gt_xxaqv_fnd_atts_doc_tab(ln_line_count).pk4_value                       := i.pk4_value;
-	 gt_xxaqv_fnd_atts_doc_tab(ln_line_count).pk5_value                       := i.pk5_value;
-     
-	 END LOOP;
-	 BEGIN
-          FORALL i IN gt_xxaqv_fnd_atts_doc_tab.first..gt_xxaqv_fnd_atts_doc_tab.last SAVE EXCEPTIONS
-            INSERT INTO xxaqv.xxaqv_fnd_atts_doc_table_stg VALUES gt_xxaqv_fnd_atts_doc_tab ( i );
-
-            xxaqv_conv_cmn_utility_pkg.print_logs('LODA_DATA: xxaqv_fnd_atts_doc_table_stg: Records loaded sucessfully: ' || SQL%rowcount, 'O' );
-            xxaqv_conv_cmn_utility_pkg.print_logs('LODA_DATA: xxaqv_fnd_atts_doc_table_stg: Records loaded sucessfully: ' || SQL%rowcount);
-          COMMIT;
-         EXCEPTION
-            WHEN ex_dml_errors 
-			THEN
-               x_retcode        := 1;
-               ln_error_count   := SQL%bulk_exceptions.count;
-               xxaqv_conv_cmn_utility_pkg.print_logs('LOAD_DATA: xxaqv_fnd_atts_doc_table_stg: Number of failures: ' || ln_error_count, 'O' );
-               xxaqv_conv_cmn_utility_pkg.print_logs('LOAD_DATA: xxaqv_fnd_atts_doc_table_stg: Number of failures: ' || ln_error_count);
-               FOR i IN 1..ln_error_count 
-			   LOOP 
-			   xxaqv_conv_cmn_utility_pkg.print_logs('LOAD_DATA: xxaqv_fnd_atts_doc_table_stg: Error: '
-                  || i
-                  || 'Array Index: '
-                  || SQL%bulk_exceptions(i).error_index
-                  || 'Message: '
-                  || sqlerrm(-SQL%bulk_exceptions(i).error_code) , 'O');
-               END LOOP;
-
-            WHEN OTHERS 
-			THEN
-               x_retcode   := 1;
-               x_err_msg   := 'LOAD_DATA: Unexpected error while populating data in xxaqv_fnd_atts_doc_table_stg.'
-                            || to_char(sqlcode)
-                            || '-'
-                            || sqlerrm;
-         END;
-	*/
-	
-	EXCEPTION
+    
+    
+    EXCEPTION
       WHEN OTHERS THEN
          x_retcode   := 1;
-         x_err_msg   := 'LOAD_DATA: Unexpected error while populating data in xxaqv_fnd_atts_doc_table_stg.'
+         x_err_msg   := 'LOAD_DATA: Unexpected error while populating data in xxaqv_attach_docs_stg.'
                       || to_char(sqlcode)
                       || '-'
                       || sqlerrm;
@@ -627,7 +720,10 @@ CREATE OR REPLACE PACKAGE BODY xxaqv_fnd_attachments_pkg AS
            , assa.vendor_site_code   vendor_site_code
            , fad.entity_name         entity_name
            , fdt.description         document_description
-           , fdst.short_text         text
+           ,  regexp_replace(fdst.short_text
+             , '[^[!-~]]*'
+             , ' '
+                  )	        text
            , NULL                    file_name
            , NULL                    url
            , NULL                    function_name
@@ -657,7 +753,7 @@ CREATE OR REPLACE PACKAGE BODY xxaqv_fnd_attachments_pkg AS
          AND fad.pk1_value         = nvl(gv_pk1_value,fad.pk1_value)       -- passing PK1_VALUE        
          AND fad.entity_name       = 'PO_VENDOR_SITES'                     -- entity name
          AND EXISTS (SELECT 1 
-		               FROM ap_suppliers apt
+                       FROM ap_suppliers apt
                           , ap_supplier_sites_all asst
                       WHERE apt.vendor_id         = asst.vendor_id
                         AND apt.segment1          = aps.segment1
@@ -703,7 +799,7 @@ CREATE OR REPLACE PACKAGE BODY xxaqv_fnd_attachments_pkg AS
          AND fad.pk1_value   = nvl(gv_pk1_value,fad.pk1_value)         -- passing PK1_VALUE
          AND fad.entity_name = 'PO_VENDOR_SITES'                       -- entity name
          AND EXISTS (SELECT 1 
-		               FROM ap_suppliers apt
+                       FROM ap_suppliers apt
                           , ap_supplier_sites_all asst
                       WHERE apt.vendor_id         = asst.vendor_id
                         AND apt.segment1          = aps.segment1
@@ -714,7 +810,7 @@ CREATE OR REPLACE PACKAGE BODY xxaqv_fnd_attachments_pkg AS
       CURSOR cur_url IS
        SELECT fad.seq_num             sequence_num
            , fdt.description          document_description
-		   , aps.segment1             vendor_number
+           , aps.segment1             vendor_number
            , assa.vendor_site_code    vendor_site_code
            , fad.entity_name          entity_name
            , null                     text
@@ -745,7 +841,7 @@ CREATE OR REPLACE PACKAGE BODY xxaqv_fnd_attachments_pkg AS
          AND fad.entity_name     = 'PO_VENDOR_SITES'                   -- entity name
          AND fad.pk1_value       = nvl(gv_pk1_value,fad.pk1_value)     -- passing PK1_VALUE
          AND EXISTS (SELECT 1 
-		               FROM ap_suppliers apt
+                       FROM ap_suppliers apt
                           , ap_supplier_sites_all asst
                       WHERE apt.vendor_id         = asst.vendor_id
                         AND apt.segment1          = aps.segment1
@@ -779,12 +875,13 @@ CREATE OR REPLACE PACKAGE BODY xxaqv_fnd_attachments_pkg AS
 
     
      -- LOCAL VARIABLES
-      ln_line_count    BINARY_INTEGER := 0;
+      ln_line_count    BINARY_INTEGER := 1;
       ln_error_count   NUMBER         := 0;
+    
       ex_dml_errors    EXCEPTION;
       PRAGMA exception_init ( ex_dml_errors, -24381 );
-	  
-	  --INSERTING INTO STAGING TABLE
+      
+      --INSERTING INTO STAGING TABLE
    BEGIN
    --Output
       xxaqv_conv_cmn_utility_pkg.print_logs('********************************** Staging Table Load Report *****************************************','O');
@@ -793,62 +890,252 @@ CREATE OR REPLACE PACKAGE BODY xxaqv_fnd_attachments_pkg AS
       xxaqv_conv_cmn_utility_pkg.print_logs(         ''         , 'O'      );
       xxaqv_conv_cmn_utility_pkg.print_logs('******************************************************************************************************', 'O');
      
-	 --LOGS
-	 IF gv_debug_flag = 'YES' 
+     --LOGS
+     IF gv_debug_flag = 'YES' 
      THEN
-	  xxaqv_conv_cmn_utility_pkg.print_logs('********************************** Staging Table Load Report *****************************************');
+      xxaqv_conv_cmn_utility_pkg.print_logs('********************************** Staging Table Load Report *****************************************');
       xxaqv_conv_cmn_utility_pkg.print_logs('');
       xxaqv_conv_cmn_utility_pkg.print_logs(rpad( 'Date:' , 30      )|| rpad(  sysdate  , 30      ));
       xxaqv_conv_cmn_utility_pkg.print_logs('');
       xxaqv_conv_cmn_utility_pkg.print_logs('******************************************************************************************************');
      END IF;
-	
-	
-	FOR i IN cur_short 
-	LOOP
-	 ln_line_count                                                            := ln_line_count + 1;
-     gt_xxaqv_fnd_atts_doc_tab(ln_line_count).pk1_value                       := i.pk1_value;
-     gt_xxaqv_fnd_atts_doc_tab(ln_line_count).entity_name                     := i.entity_name;             
-     gt_xxaqv_fnd_atts_doc_tab(ln_line_count).seq_num                         := i.sequence_num;                
-     --gt_xxaqv_fnd_atts_doc_tab(ln_line_count).title                           := i.title;                   
-     gt_xxaqv_fnd_atts_doc_tab(ln_line_count).category_name                   := i.category_name;               
-     gt_xxaqv_fnd_atts_doc_tab(ln_line_count).datatype_name                   := i.datatype_name;           
-     gt_xxaqv_fnd_atts_doc_tab(ln_line_count).document_description            := i.document_description;    
-     gt_xxaqv_fnd_atts_doc_tab(ln_line_count).text                            := i.text;                   
-     gt_xxaqv_fnd_atts_doc_tab(ln_line_count).url                             := i.url;                   
-     gt_xxaqv_fnd_atts_doc_tab(ln_line_count).file_name                       := i.file_name;              
-     gt_xxaqv_fnd_atts_doc_tab(ln_line_count).creation_date                   := SYSDATE;        
-     gt_xxaqv_fnd_atts_doc_tab(ln_line_count).last_update_date                := SYSDATE;       
-     gt_xxaqv_fnd_atts_doc_tab(ln_line_count).last_update_login               := gv_login_id;      
-     gt_xxaqv_fnd_atts_doc_tab(ln_line_count).last_updated_by                 := gv_user_id;       
-     gt_xxaqv_fnd_atts_doc_tab(ln_line_count).created_by                      := gv_user_id;            
-     gt_xxaqv_fnd_atts_doc_tab(ln_line_count).processed_flag                  := 'LS';
-	 gt_xxaqv_fnd_atts_doc_tab(ln_line_count).pk2_value                       := i.pk2_value;
-	 gt_xxaqv_fnd_atts_doc_tab(ln_line_count).pk3_value                       := i.pk3_value;
-	 gt_xxaqv_fnd_atts_doc_tab(ln_line_count).pk4_value                       := i.pk4_value;
-	 gt_xxaqv_fnd_atts_doc_tab(ln_line_count).pk5_value                       := i.pk5_value;
-	 gt_xxaqv_fnd_atts_doc_tab(ln_line_count).vendor_site_code                := i.vendor_site_code;
-	 gt_xxaqv_fnd_atts_doc_tab(ln_line_count).vendor_number                   := i.vendor_number;
-     
-	 END LOOP;
-	 BEGIN
-          FORALL i IN gt_xxaqv_fnd_atts_doc_tab.first..gt_xxaqv_fnd_atts_doc_tab.last SAVE EXCEPTIONS
-            INSERT INTO xxaqv.xxaqv_fnd_atts_doc_table_stg VALUES gt_xxaqv_fnd_atts_doc_tab ( i );
+    
+    
 
-            xxaqv_conv_cmn_utility_pkg.print_logs('LODA_DATA: xxaqv_fnd_atts_doc_table_stg: Records loaded sucessfully: ' || SQL%rowcount, 'O' );
-            xxaqv_conv_cmn_utility_pkg.print_logs('LODA_DATA: xxaqv_fnd_atts_doc_table_stg: Records loaded sucessfully: ' || SQL%rowcount);
+    gt_xxaqv_attach_docs_tab.delete;
+	
+    FOR i IN cur_short 
+    LOOP
+     
+     gt_xxaqv_attach_docs_tab(ln_line_count).pk1_value                       := i.pk1_value;
+     gt_xxaqv_attach_docs_tab(ln_line_count).entity_name                     := i.entity_name;             
+     gt_xxaqv_attach_docs_tab(ln_line_count).seq_num                         := i.sequence_num;                
+     --gt_xxaqv_attach_docs_tab(ln_line_count).title                           := i.title;                   
+     gt_xxaqv_attach_docs_tab(ln_line_count).category_name                   := i.category_name;               
+     gt_xxaqv_attach_docs_tab(ln_line_count).datatype_name                   := i.datatype_name;           
+     gt_xxaqv_attach_docs_tab(ln_line_count).document_description            := i.document_description;    
+     gt_xxaqv_attach_docs_tab(ln_line_count).text                            := i.text;                   
+     gt_xxaqv_attach_docs_tab(ln_line_count).url                             := i.url;                   
+     gt_xxaqv_attach_docs_tab(ln_line_count).file_name                       := i.file_name;              
+     gt_xxaqv_attach_docs_tab(ln_line_count).creation_date                   := SYSDATE;        
+     gt_xxaqv_attach_docs_tab(ln_line_count).last_update_date                := SYSDATE;       
+     gt_xxaqv_attach_docs_tab(ln_line_count).last_update_login               := gv_login_id;      
+     gt_xxaqv_attach_docs_tab(ln_line_count).last_updated_by                 := gv_user_id;       
+     gt_xxaqv_attach_docs_tab(ln_line_count).created_by                      := gv_user_id;            
+     gt_xxaqv_attach_docs_tab(ln_line_count).processed_flag                  := 'LS';
+     gt_xxaqv_attach_docs_tab(ln_line_count).pk2_value                       := i.pk2_value;
+     gt_xxaqv_attach_docs_tab(ln_line_count).pk3_value                       := i.pk3_value;
+     gt_xxaqv_attach_docs_tab(ln_line_count).pk4_value                       := i.pk4_value;
+     gt_xxaqv_attach_docs_tab(ln_line_count).pk5_value                       := i.pk5_value;
+     gt_xxaqv_attach_docs_tab(ln_line_count).vendor_site_code                := i.vendor_site_code;
+     gt_xxaqv_attach_docs_tab(ln_line_count).vendor_number                   := i.vendor_number;
+     ln_line_count                                                            := ln_line_count + 1;
+     END LOOP;
+	 
+     BEGIN
+            FORALL i IN gt_xxaqv_attach_docs_tab.first..gt_xxaqv_attach_docs_tab.last SAVE EXCEPTIONS
+            INSERT INTO xxaqv.xxaqv_attach_docs_stg VALUES gt_xxaqv_attach_docs_tab ( i );
+
+            xxaqv_conv_cmn_utility_pkg.print_logs('LODA_DATA: xxaqv_attach_docs_stg: Records loaded sucessfully: ' || SQL%rowcount, 'O' );
+            xxaqv_conv_cmn_utility_pkg.print_logs('LODA_DATA: xxaqv_attach_docs_stg: Records loaded sucessfully: ' || SQL%rowcount);
           COMMIT;
-		  
+          
          EXCEPTION
             WHEN ex_dml_errors 
-			THEN
+            THEN
                x_retcode        := 1;
                ln_error_count   := SQL%bulk_exceptions.count;
-               xxaqv_conv_cmn_utility_pkg.print_logs('LOAD_DATA: xxaqv_fnd_atts_doc_table_stg: Number of failures: ' || ln_error_count, 'O' );
-               xxaqv_conv_cmn_utility_pkg.print_logs('LOAD_DATA: xxaqv_fnd_atts_doc_table_stg: Number of failures: ' || ln_error_count);
+               xxaqv_conv_cmn_utility_pkg.print_logs('LOAD_DATA: xxaqv_attach_docs_stg: Number of failures: ' || ln_error_count, 'O' );
+               xxaqv_conv_cmn_utility_pkg.print_logs('LOAD_DATA: xxaqv_attach_docs_stg: Number of failures: ' || ln_error_count);
                FOR i IN 1..ln_error_count 
-			   LOOP 
-			   xxaqv_conv_cmn_utility_pkg.print_logs('LOAD_DATA: xxaqv_fnd_atts_doc_table_stg: Error: '
+               LOOP 
+               xxaqv_conv_cmn_utility_pkg.print_logs('LOAD_DATA: xxaqv_attach_docs_stg: Error: '
+                  || i
+                  || 'Array Index: '
+                  || SQL%bulk_exceptions(i).error_index
+                  || 'Message: '
+                  || sqlerrm(-SQL%bulk_exceptions(i).error_code) , 'O');
+               END LOOP;
+        
+            WHEN OTHERS 
+            THEN
+               x_retcode   := 1;
+               x_err_msg   := 'LOAD_DATA: Unexpected error while populating data in xxaqv_attach_docs_stg.'
+                            || to_char(sqlcode)
+                            || '-'
+                            || sqlerrm;
+         END;
+
+     gt_xxaqv_attach_docs_tab.delete;
+	 
+    FOR j IN cur_long 
+    LOOP
+     
+     gt_xxaqv_attach_docs_tab(ln_line_count).pk1_value                       := j.pk1_value;
+     gt_xxaqv_attach_docs_tab(ln_line_count).entity_name                     := j.entity_name;             
+     gt_xxaqv_attach_docs_tab(ln_line_count).seq_num                         := j.sequence_num;                
+     --gt_xxaqv_attach_docs_tab(ln_line_count).title                           := i.title;                   
+     gt_xxaqv_attach_docs_tab(ln_line_count).category_name                   := j.category_name;               
+     gt_xxaqv_attach_docs_tab(ln_line_count).datatype_name                   := j.datatype_name;           
+     gt_xxaqv_attach_docs_tab(ln_line_count).document_description            := j.document_description;    
+     gt_xxaqv_attach_docs_tab(ln_line_count).text                            := j.text;                   
+     gt_xxaqv_attach_docs_tab(ln_line_count).url                             := j.url;                   
+     gt_xxaqv_attach_docs_tab(ln_line_count).file_name                       := j.file_name;              
+     gt_xxaqv_attach_docs_tab(ln_line_count).creation_date                   := SYSDATE;        
+     gt_xxaqv_attach_docs_tab(ln_line_count).last_update_date                := SYSDATE;       
+     gt_xxaqv_attach_docs_tab(ln_line_count).last_update_login               := gv_login_id;      
+     gt_xxaqv_attach_docs_tab(ln_line_count).last_updated_by                 := gv_user_id;       
+     gt_xxaqv_attach_docs_tab(ln_line_count).created_by                      := gv_user_id;            
+     gt_xxaqv_attach_docs_tab(ln_line_count).processed_flag                  := 'LS';
+     gt_xxaqv_attach_docs_tab(ln_line_count).pk2_value                       := j.pk2_value;
+     gt_xxaqv_attach_docs_tab(ln_line_count).pk3_value                       := j.pk3_value;
+     gt_xxaqv_attach_docs_tab(ln_line_count).pk4_value                       := j.pk4_value;
+     gt_xxaqv_attach_docs_tab(ln_line_count).pk5_value                       := j.pk5_value;
+     gt_xxaqv_attach_docs_tab(ln_line_count).vendor_site_code                := j.vendor_site_code;
+     gt_xxaqv_attach_docs_tab(ln_line_count).vendor_number                   := j.vendor_number;
+     ln_line_count                                                            := ln_line_count + 1;
+     END LOOP;
+     BEGIN
+          FORALL j IN gt_xxaqv_attach_docs_tab.first..gt_xxaqv_attach_docs_tab.last SAVE EXCEPTIONS
+            INSERT INTO xxaqv.xxaqv_attach_docs_stg VALUES gt_xxaqv_attach_docs_tab ( j );
+    
+            xxaqv_conv_cmn_utility_pkg.print_logs('LODA_DATA: xxaqv_attach_docs_stg: Records loaded sucessfully: ' || SQL%rowcount, 'O' );
+            xxaqv_conv_cmn_utility_pkg.print_logs('LODA_DATA: xxaqv_attach_docs_stg: Records loaded sucessfully: ' || SQL%rowcount);
+          COMMIT;
+         EXCEPTION
+            WHEN ex_dml_errors 
+            THEN
+               x_retcode        := 1;
+               ln_error_count   := SQL%bulk_exceptions.count;
+               xxaqv_conv_cmn_utility_pkg.print_logs('LOAD_DATA: xxaqv_attach_docs_stg: Number of failures: ' || ln_error_count, 'O' );
+               xxaqv_conv_cmn_utility_pkg.print_logs('LOAD_DATA: xxaqv_attach_docs_stg: Number of failures: ' || ln_error_count);
+               FOR i IN 1..ln_error_count 
+               LOOP 
+               xxaqv_conv_cmn_utility_pkg.print_logs('LOAD_DATA: xxaqv_attach_docs_stg: Error: '
+                  || i
+                  || 'Array Index: '
+                  || SQL%bulk_exceptions(i).error_index
+                  || 'Message: '
+                  || sqlerrm(-SQL%bulk_exceptions(i).error_code) , 'O');
+               END LOOP;
+    
+            WHEN OTHERS 
+            THEN
+               x_retcode   := 1;
+               x_err_msg   := 'LOAD_DATA: Unexpected error while populating data in xxaqv_attach_docs_stg.'
+                            || to_char(sqlcode)
+                            || '-'
+                            || sqlerrm;
+         END;
+    
+
+    gt_xxaqv_attach_docs_tab.delete;
+	
+    FOR k IN cur_url 
+    LOOP
+     
+     gt_xxaqv_attach_docs_tab(ln_line_count).pk1_value                       := k.pk1_value;
+     gt_xxaqv_attach_docs_tab(ln_line_count).entity_name                     := k.entity_name;             
+     gt_xxaqv_attach_docs_tab(ln_line_count).seq_num                         := k.sequence_num;                
+    -- gt_xxaqv_attach_docs_tab(ln_line_count).title                           := i.title;                   
+     gt_xxaqv_attach_docs_tab(ln_line_count).category_name                   := k.category_name;               
+     gt_xxaqv_attach_docs_tab(ln_line_count).datatype_name                   := k.datatype_name;           
+     gt_xxaqv_attach_docs_tab(ln_line_count).document_description            := k.document_description;    
+     gt_xxaqv_attach_docs_tab(ln_line_count).text                            := k.text;                   
+     gt_xxaqv_attach_docs_tab(ln_line_count).url                             := k.url;                   
+     gt_xxaqv_attach_docs_tab(ln_line_count).file_name                       := k.file_name;              
+     gt_xxaqv_attach_docs_tab(ln_line_count).creation_date                   := SYSDATE;        
+     gt_xxaqv_attach_docs_tab(ln_line_count).last_update_date                := SYSDATE;       
+     gt_xxaqv_attach_docs_tab(ln_line_count).last_update_login               := gv_login_id;      
+     gt_xxaqv_attach_docs_tab(ln_line_count).last_updated_by                 := gv_user_id;       
+     gt_xxaqv_attach_docs_tab(ln_line_count).created_by                      := gv_user_id;            
+     gt_xxaqv_attach_docs_tab(ln_line_count).processed_flag                  := 'LS';
+     gt_xxaqv_attach_docs_tab(ln_line_count).pk2_value                       := k.pk2_value;
+     gt_xxaqv_attach_docs_tab(ln_line_count).pk3_value                       := k.pk3_value;
+     gt_xxaqv_attach_docs_tab(ln_line_count).pk4_value                       := k.pk4_value;
+     gt_xxaqv_attach_docs_tab(ln_line_count).pk5_value                       := k.pk5_value;
+     gt_xxaqv_attach_docs_tab(ln_line_count).vendor_site_code                := k.vendor_site_code;
+     gt_xxaqv_attach_docs_tab(ln_line_count).vendor_number                   := k.vendor_number;
+     ln_line_count                                                            := ln_line_count + 1;
+     
+     END LOOP;
+     BEGIN
+          FORALL k IN gt_xxaqv_attach_docs_tab.first..gt_xxaqv_attach_docs_tab.last SAVE EXCEPTIONS
+            INSERT INTO xxaqv.xxaqv_attach_docs_stg VALUES gt_xxaqv_attach_docs_tab ( k );
+    
+            xxaqv_conv_cmn_utility_pkg.print_logs('LODA_DATA: xxaqv_attach_docs_stg: Records loaded sucessfully: ' || SQL%rowcount, 'O' );
+            xxaqv_conv_cmn_utility_pkg.print_logs('LODA_DATA: xxaqv_attach_docs_stg: Records loaded sucessfully: ' || SQL%rowcount);
+          COMMIT;
+         EXCEPTION
+            WHEN ex_dml_errors 
+            THEN
+               x_retcode        := 1;
+               ln_error_count   := SQL%bulk_exceptions.count;
+               xxaqv_conv_cmn_utility_pkg.print_logs('LOAD_DATA: xxaqv_attach_docs_stg: Number of failures: ' || ln_error_count, 'O' );
+               xxaqv_conv_cmn_utility_pkg.print_logs('LOAD_DATA: xxaqv_attach_docs_stg: Number of failures: ' || ln_error_count);
+               FOR i IN 1..ln_error_count 
+               LOOP 
+               xxaqv_conv_cmn_utility_pkg.print_logs('LOAD_DATA: xxaqv_attach_docs_stg: Error: '
+                  || i
+                  || 'Array Index: '
+                  || SQL%bulk_exceptions(i).error_index
+                  || 'Message: '
+                  || sqlerrm(-SQL%bulk_exceptions(i).error_code) , 'O');
+               END LOOP;
+    
+            WHEN OTHERS 
+            THEN
+               x_retcode   := 1;
+               x_err_msg   := 'LOAD_DATA: Unexpected error while populating data in xxaqv_attach_docs_stg.'
+                            || to_char(sqlcode)
+                            || '-'
+                            || sqlerrm;
+         END;
+    
+    /*
+    
+    FOR i IN cur_file 
+    LOOP
+     ln_line_count                                                            := ln_line_count + 1;
+     gt_xxaqv_attach_docs_tab(ln_line_count).pk1_value                       := i.pk1_value;
+     gt_xxaqv_attach_docs_tab(ln_line_count).entity_name                     := i.entity_name;             
+     gt_xxaqv_attach_docs_tab(ln_line_count).seq_num                         := i.sequence_num;                
+     gt_xxaqv_attach_docs_tab(ln_line_count).title                           := i.title;                   
+     gt_xxaqv_attach_docs_tab(ln_line_count).category_name                   := i.category_name;               
+     gt_xxaqv_attach_docs_tab(ln_line_count).datatype_name                   := i.datatype_name;           
+     gt_xxaqv_attach_docs_tab(ln_line_count).document_description            := i.document_description;    
+     gt_xxaqv_attach_docs_tab(ln_line_count).text                            := i.text;                   
+     gt_xxaqv_attach_docs_tab(ln_line_count).url                             := i.url;                   
+     gt_xxaqv_attach_docs_tab(ln_line_count).file_name                       := i.file_name;              
+     gt_xxaqv_attach_docs_tab(ln_line_count).creation_date                   := SYSDATE;        
+     gt_xxaqv_attach_docs_tab(ln_line_count).last_update_date                := SYSDATE;       
+     gt_xxaqv_attach_docs_tab(ln_line_count).last_update_login               := gv_login_id;      
+     gt_xxaqv_attach_docs_tab(ln_line_count).last_updated_by                 := gv_user_id;       
+     gt_xxaqv_attach_docs_tab(ln_line_count).created_by                      := gv_user_id;            
+     gt_xxaqv_attach_docs_tab(ln_line_count).processed_flag                  := 'LS';
+     gt_xxaqv_attach_docs_tab(ln_line_count).pk2_value                       := i.pk2_value;
+     gt_xxaqv_attach_docs_tab(ln_line_count).pk3_value                       := i.pk3_value;
+     gt_xxaqv_attach_docs_tab(ln_line_count).pk4_value                       := i.pk4_value;
+     gt_xxaqv_attach_docs_tab(ln_line_count).pk5_value                       := i.pk5_value;
+     
+     END LOOP;
+     BEGIN
+          FORALL i IN gt_xxaqv_attach_docs_tab.first..gt_xxaqv_attach_docs_tab.last SAVE EXCEPTIONS
+            INSERT INTO xxaqv.xxaqv_attach_docs_stg VALUES gt_xxaqv_attach_docs_tab ( i );
+    
+            xxaqv_conv_cmn_utility_pkg.print_logs('LODA_DATA: xxaqv_attach_docs_stg: Records loaded sucessfully: ' || SQL%rowcount, 'O' );
+            xxaqv_conv_cmn_utility_pkg.print_logs('LODA_DATA: xxaqv_attach_docs_stg: Records loaded sucessfully: ' || SQL%rowcount);
+          COMMIT;
+         EXCEPTION
+            WHEN ex_dml_errors 
+            THEN
+               x_retcode        := 1;
+               ln_error_count   := SQL%bulk_exceptions.count;
+               xxaqv_conv_cmn_utility_pkg.print_logs('LOAD_DATA: xxaqv_attach_docs_stg: Number of failures: ' || ln_error_count, 'O' );
+               xxaqv_conv_cmn_utility_pkg.print_logs('LOAD_DATA: xxaqv_attach_docs_stg: Number of failures: ' || ln_error_count);
+               FOR i IN 1..ln_error_count 
+               LOOP 
+               xxaqv_conv_cmn_utility_pkg.print_logs('LOAD_DATA: xxaqv_attach_docs_stg: Error: '
                   || i
                   || 'Array Index: '
                   || SQL%bulk_exceptions(i).error_index
@@ -857,200 +1144,19 @@ CREATE OR REPLACE PACKAGE BODY xxaqv_fnd_attachments_pkg AS
                END LOOP;
 
             WHEN OTHERS 
-			THEN
+            THEN
                x_retcode   := 1;
-               x_err_msg   := 'LOAD_DATA: Unexpected error while populating data in xxaqv_fnd_atts_doc_table_stg.'
+               x_err_msg   := 'LOAD_DATA: Unexpected error while populating data in xxaqv_attach_docs_stg.'
                             || to_char(sqlcode)
                             || '-'
                             || sqlerrm;
          END;
-
-
-	FOR j IN cur_long 
-	LOOP
-	 ln_line_count                                                            := ln_line_count + 1;
-     gt_xxaqv_fnd_atts_doc_tab(ln_line_count).pk1_value                       := j.pk1_value;
-     gt_xxaqv_fnd_atts_doc_tab(ln_line_count).entity_name                     := j.entity_name;             
-     gt_xxaqv_fnd_atts_doc_tab(ln_line_count).seq_num                         := j.sequence_num;                
-     --gt_xxaqv_fnd_atts_doc_tab(ln_line_count).title                           := i.title;                   
-     gt_xxaqv_fnd_atts_doc_tab(ln_line_count).category_name                   := j.category_name;               
-     gt_xxaqv_fnd_atts_doc_tab(ln_line_count).datatype_name                   := j.datatype_name;           
-     gt_xxaqv_fnd_atts_doc_tab(ln_line_count).document_description            := j.document_description;    
-     gt_xxaqv_fnd_atts_doc_tab(ln_line_count).text                            := j.text;                   
-     gt_xxaqv_fnd_atts_doc_tab(ln_line_count).url                             := j.url;                   
-     gt_xxaqv_fnd_atts_doc_tab(ln_line_count).file_name                       := j.file_name;              
-     gt_xxaqv_fnd_atts_doc_tab(ln_line_count).creation_date                   := SYSDATE;        
-     gt_xxaqv_fnd_atts_doc_tab(ln_line_count).last_update_date                := SYSDATE;       
-     gt_xxaqv_fnd_atts_doc_tab(ln_line_count).last_update_login               := gv_login_id;      
-     gt_xxaqv_fnd_atts_doc_tab(ln_line_count).last_updated_by                 := gv_user_id;       
-     gt_xxaqv_fnd_atts_doc_tab(ln_line_count).created_by                      := gv_user_id;            
-     gt_xxaqv_fnd_atts_doc_tab(ln_line_count).processed_flag                  := 'LS';
-	 gt_xxaqv_fnd_atts_doc_tab(ln_line_count).pk2_value                       := j.pk2_value;
-	 gt_xxaqv_fnd_atts_doc_tab(ln_line_count).pk3_value                       := j.pk3_value;
-	 gt_xxaqv_fnd_atts_doc_tab(ln_line_count).pk4_value                       := j.pk4_value;
-	 gt_xxaqv_fnd_atts_doc_tab(ln_line_count).pk5_value                       := j.pk5_value;
-	 gt_xxaqv_fnd_atts_doc_tab(ln_line_count).vendor_site_code                := j.vendor_site_code;
-	 gt_xxaqv_fnd_atts_doc_tab(ln_line_count).vendor_number                   := j.vendor_number;
-     
-	 END LOOP;
-	 BEGIN
-          FORALL j IN gt_xxaqv_fnd_atts_doc_tab.first..gt_xxaqv_fnd_atts_doc_tab.last SAVE EXCEPTIONS
-            INSERT INTO xxaqv.xxaqv_fnd_atts_doc_table_stg VALUES gt_xxaqv_fnd_atts_doc_tab ( j );
-
-            xxaqv_conv_cmn_utility_pkg.print_logs('LODA_DATA: xxaqv_fnd_atts_doc_table_stg: Records loaded sucessfully: ' || SQL%rowcount, 'O' );
-            xxaqv_conv_cmn_utility_pkg.print_logs('LODA_DATA: xxaqv_fnd_atts_doc_table_stg: Records loaded sucessfully: ' || SQL%rowcount);
-          COMMIT;
-         EXCEPTION
-            WHEN ex_dml_errors 
-			THEN
-               x_retcode        := 1;
-               ln_error_count   := SQL%bulk_exceptions.count;
-               xxaqv_conv_cmn_utility_pkg.print_logs('LOAD_DATA: xxaqv_fnd_atts_doc_table_stg: Number of failures: ' || ln_error_count, 'O' );
-               xxaqv_conv_cmn_utility_pkg.print_logs('LOAD_DATA: xxaqv_fnd_atts_doc_table_stg: Number of failures: ' || ln_error_count);
-               FOR i IN 1..ln_error_count 
-			   LOOP 
-			   xxaqv_conv_cmn_utility_pkg.print_logs('LOAD_DATA: xxaqv_fnd_atts_doc_table_stg: Error: '
-                  || i
-                  || 'Array Index: '
-                  || SQL%bulk_exceptions(i).error_index
-                  || 'Message: '
-                  || sqlerrm(-SQL%bulk_exceptions(i).error_code) , 'O');
-               END LOOP;
-
-            WHEN OTHERS 
-			THEN
-               x_retcode   := 1;
-               x_err_msg   := 'LOAD_DATA: Unexpected error while populating data in xxaqv_fnd_atts_doc_table_stg.'
-                            || to_char(sqlcode)
-                            || '-'
-                            || sqlerrm;
-         END;
-	
-	FOR k IN cur_url 
-	LOOP
-	 ln_line_count                                                            := ln_line_count + 1;
-     gt_xxaqv_fnd_atts_doc_tab(ln_line_count).pk1_value                       := k.pk1_value;
-     gt_xxaqv_fnd_atts_doc_tab(ln_line_count).entity_name                     := k.entity_name;             
-     gt_xxaqv_fnd_atts_doc_tab(ln_line_count).seq_num                         := k.sequence_num;                
-    -- gt_xxaqv_fnd_atts_doc_tab(ln_line_count).title                           := i.title;                   
-     gt_xxaqv_fnd_atts_doc_tab(ln_line_count).category_name                   := k.category_name;               
-     gt_xxaqv_fnd_atts_doc_tab(ln_line_count).datatype_name                   := k.datatype_name;           
-     gt_xxaqv_fnd_atts_doc_tab(ln_line_count).document_description            := k.document_description;    
-     gt_xxaqv_fnd_atts_doc_tab(ln_line_count).text                            := k.text;                   
-     gt_xxaqv_fnd_atts_doc_tab(ln_line_count).url                             := k.url;                   
-     gt_xxaqv_fnd_atts_doc_tab(ln_line_count).file_name                       := k.file_name;              
-     gt_xxaqv_fnd_atts_doc_tab(ln_line_count).creation_date                   := SYSDATE;        
-     gt_xxaqv_fnd_atts_doc_tab(ln_line_count).last_update_date                := SYSDATE;       
-     gt_xxaqv_fnd_atts_doc_tab(ln_line_count).last_update_login               := gv_login_id;      
-     gt_xxaqv_fnd_atts_doc_tab(ln_line_count).last_updated_by                 := gv_user_id;       
-     gt_xxaqv_fnd_atts_doc_tab(ln_line_count).created_by                      := gv_user_id;            
-     gt_xxaqv_fnd_atts_doc_tab(ln_line_count).processed_flag                  := 'LS';
-	 gt_xxaqv_fnd_atts_doc_tab(ln_line_count).pk2_value                       := k.pk2_value;
-	 gt_xxaqv_fnd_atts_doc_tab(ln_line_count).pk3_value                       := k.pk3_value;
-	 gt_xxaqv_fnd_atts_doc_tab(ln_line_count).pk4_value                       := k.pk4_value;
-	 gt_xxaqv_fnd_atts_doc_tab(ln_line_count).pk5_value                       := k.pk5_value;
-	 gt_xxaqv_fnd_atts_doc_tab(ln_line_count).vendor_site_code                := k.vendor_site_code;
-	 gt_xxaqv_fnd_atts_doc_tab(ln_line_count).vendor_number                   := k.vendor_number;
-     
-	 END LOOP;
-	 BEGIN
-          FORALL k IN gt_xxaqv_fnd_atts_doc_tab.first..gt_xxaqv_fnd_atts_doc_tab.last SAVE EXCEPTIONS
-            INSERT INTO xxaqv.xxaqv_fnd_atts_doc_table_stg VALUES gt_xxaqv_fnd_atts_doc_tab ( k );
-
-            xxaqv_conv_cmn_utility_pkg.print_logs('LODA_DATA: xxaqv_fnd_atts_doc_table_stg: Records loaded sucessfully: ' || SQL%rowcount, 'O' );
-            xxaqv_conv_cmn_utility_pkg.print_logs('LODA_DATA: xxaqv_fnd_atts_doc_table_stg: Records loaded sucessfully: ' || SQL%rowcount);
-          COMMIT;
-         EXCEPTION
-            WHEN ex_dml_errors 
-			THEN
-               x_retcode        := 1;
-               ln_error_count   := SQL%bulk_exceptions.count;
-               xxaqv_conv_cmn_utility_pkg.print_logs('LOAD_DATA: xxaqv_fnd_atts_doc_table_stg: Number of failures: ' || ln_error_count, 'O' );
-               xxaqv_conv_cmn_utility_pkg.print_logs('LOAD_DATA: xxaqv_fnd_atts_doc_table_stg: Number of failures: ' || ln_error_count);
-               FOR i IN 1..ln_error_count 
-			   LOOP 
-			   xxaqv_conv_cmn_utility_pkg.print_logs('LOAD_DATA: xxaqv_fnd_atts_doc_table_stg: Error: '
-                  || i
-                  || 'Array Index: '
-                  || SQL%bulk_exceptions(i).error_index
-                  || 'Message: '
-                  || sqlerrm(-SQL%bulk_exceptions(i).error_code) , 'O');
-               END LOOP;
-
-            WHEN OTHERS 
-			THEN
-               x_retcode   := 1;
-               x_err_msg   := 'LOAD_DATA: Unexpected error while populating data in xxaqv_fnd_atts_doc_table_stg.'
-                            || to_char(sqlcode)
-                            || '-'
-                            || sqlerrm;
-         END;
-	
-	/*
-	
-	FOR i IN cur_file 
-	LOOP
-	 ln_line_count                                                            := ln_line_count + 1;
-     gt_xxaqv_fnd_atts_doc_tab(ln_line_count).pk1_value        := i.pk1_value;
-     gt_xxaqv_fnd_atts_doc_tab(ln_line_count).entity_name                     := i.entity_name;             
-     gt_xxaqv_fnd_atts_doc_tab(ln_line_count).seq_num                         := i.sequence_num;                
-     gt_xxaqv_fnd_atts_doc_tab(ln_line_count).title                           := i.title;                   
-     gt_xxaqv_fnd_atts_doc_tab(ln_line_count).category_name                   := i.category_name;               
-     gt_xxaqv_fnd_atts_doc_tab(ln_line_count).datatype_name                   := i.datatype_name;           
-     gt_xxaqv_fnd_atts_doc_tab(ln_line_count).document_description            := i.document_description;    
-     gt_xxaqv_fnd_atts_doc_tab(ln_line_count).text                            := i.text;                   
-     gt_xxaqv_fnd_atts_doc_tab(ln_line_count).url                             := i.url;                   
-     gt_xxaqv_fnd_atts_doc_tab(ln_line_count).file_name                       := i.file_name;              
-     gt_xxaqv_fnd_atts_doc_tab(ln_line_count).creation_date                   := SYSDATE;        
-     gt_xxaqv_fnd_atts_doc_tab(ln_line_count).last_update_date                := SYSDATE;       
-     gt_xxaqv_fnd_atts_doc_tab(ln_line_count).last_update_login               := gv_login_id;      
-     gt_xxaqv_fnd_atts_doc_tab(ln_line_count).last_updated_by                 := gv_user_id;       
-     gt_xxaqv_fnd_atts_doc_tab(ln_line_count).created_by                      := gv_user_id;            
-     gt_xxaqv_fnd_atts_doc_tab(ln_line_count).processed_flag                  := 'LS';
-	 gt_xxaqv_fnd_atts_doc_tab(ln_line_count).pk2_value                       := i.pk2_value;
-	 gt_xxaqv_fnd_atts_doc_tab(ln_line_count).pk3_value                       := i.pk3_value;
-	 gt_xxaqv_fnd_atts_doc_tab(ln_line_count).pk4_value                       := i.pk4_value;
-	 gt_xxaqv_fnd_atts_doc_tab(ln_line_count).pk5_value                       := i.pk5_value;
-     
-	 END LOOP;
-	 BEGIN
-          FORALL i IN gt_xxaqv_fnd_atts_doc_tab.first..gt_xxaqv_fnd_atts_doc_tab.last SAVE EXCEPTIONS
-            INSERT INTO xxaqv.xxaqv_fnd_atts_doc_table_stg VALUES gt_xxaqv_fnd_atts_doc_tab ( i );
-
-            xxaqv_conv_cmn_utility_pkg.print_logs('LODA_DATA: xxaqv_fnd_atts_doc_table_stg: Records loaded sucessfully: ' || SQL%rowcount, 'O' );
-            xxaqv_conv_cmn_utility_pkg.print_logs('LODA_DATA: xxaqv_fnd_atts_doc_table_stg: Records loaded sucessfully: ' || SQL%rowcount);
-          COMMIT;
-         EXCEPTION
-            WHEN ex_dml_errors 
-			THEN
-               x_retcode        := 1;
-               ln_error_count   := SQL%bulk_exceptions.count;
-               xxaqv_conv_cmn_utility_pkg.print_logs('LOAD_DATA: xxaqv_fnd_atts_doc_table_stg: Number of failures: ' || ln_error_count, 'O' );
-               xxaqv_conv_cmn_utility_pkg.print_logs('LOAD_DATA: xxaqv_fnd_atts_doc_table_stg: Number of failures: ' || ln_error_count);
-               FOR i IN 1..ln_error_count 
-			   LOOP 
-			   xxaqv_conv_cmn_utility_pkg.print_logs('LOAD_DATA: xxaqv_fnd_atts_doc_table_stg: Error: '
-                  || i
-                  || 'Array Index: '
-                  || SQL%bulk_exceptions(i).error_index
-                  || 'Message: '
-                  || sqlerrm(-SQL%bulk_exceptions(i).error_code) , 'O');
-               END LOOP;
-
-            WHEN OTHERS 
-			THEN
-               x_retcode   := 1;
-               x_err_msg   := 'LOAD_DATA: Unexpected error while populating data in xxaqv_fnd_atts_doc_table_stg.'
-                            || to_char(sqlcode)
-                            || '-'
-                            || sqlerrm;
-         END;
-	*/
-	
-	EXCEPTION
+    */
+    
+    EXCEPTION
       WHEN OTHERS THEN
          x_retcode   := 1;
-         x_err_msg   := 'LOAD_DATA: Unexpected error while populating data in xxaqv_fnd_atts_doc_table_stg.'
+         x_err_msg   := 'LOAD_DATA: Unexpected error while populating data in xxaqv_attach_docs_stg.'
                       || to_char(sqlcode)
                       || '-'
                       || sqlerrm;
@@ -1064,62 +1170,62 @@ CREATE OR REPLACE PACKAGE BODY xxaqv_fnd_attachments_pkg AS
    PROCEDURE validate_staging_records ( x_retcode       OUT   VARCHAR2
                                       , x_err_msg       OUT   VARCHAR2 )
      IS	
-	 
-	 --Local Variables
-	 gn_created_by                    NUMBER         := fnd_global.user_id;
-	 ln_failed_invoice                NUMBER         := NULL;
+     
+     --Local Variables
+     gn_created_by                    NUMBER         := fnd_global.user_id;
+     ln_failed_invoice                NUMBER         := NULL;
      ln_success_invoice               NUMBER         := NULL;
-	 l_val_status                     VARCHAR2(10)   := NULL;
-	 l_val_flag                       VARCHAR2(100);
-	 ln_error_msg                     VARCHAR2(4000) := NULL;
-	 lv_error_msg                     VARCHAR2(4000) := NULL;
+     l_val_status                     VARCHAR2(10)   := NULL;
+     l_val_flag                       VARCHAR2(100);
+     ln_error_msg                     VARCHAR2(4000) := NULL;
+     lv_error_msg                     VARCHAR2(4000) := NULL;
      ln_mstr_flag                     VARCHAR2(10);
-	 ln_pk1_value                     VARCHAR2(100);
-	 lv_category_id                   NUMBER;
-	 lv_datatype_id                   NUMBER;
-	 
-	 
-	 CURSOR lcu_attach
-	 IS
-	 SELECT pk1_value   
-	      , entity_name                
-	      , seq_num                    
-	      , title                      
-	      , category_name              
-	      , category_id                
-	      , datatype_id                
-	      , datatype_name              
-	      , document_description       
-	      , text                       
-	      , url                        
-	      , file_name                  
-	      , record_id                  
-	      , creation_date              
-	      , last_update_date           
-	      , last_update_login          
-	      , last_updated_by            
-	      , created_by                 
-	      , processed_flag             
-	      , error_msg                  
-	      , document_id                
-	      , media_id 
-          , rowid	
+     ln_pk1_value                     VARCHAR2(100);
+     lv_category_id                   NUMBER;
+     lv_datatype_id                   NUMBER;
+     
+     
+     CURSOR lcu_attach
+     IS
+     SELECT pk1_value   
+          , entity_name                
+          , seq_num                    
+          , title                      
+          , category_name              
+          , category_id                
+          , datatype_id                
+          , datatype_name              
+          , document_description       
+          , text                       
+          , url                        
+          , file_name                  
+          , record_id                  
+          , creation_date              
+          , last_update_date           
+          , last_update_login          
+          , last_updated_by            
+          , created_by                 
+          , processed_flag             
+          , error_msg                  
+          , document_id                
+          , media_id 
+          , rowid
           , pk2_value                
-		  , pk3_value               
-		  , pk4_value               
-		  , pk5_value 
-		  , vendor_name
-		  , vendor_number
+          , pk3_value               
+          , pk4_value               
+          , pk5_value 
+          , vendor_name
+          , vendor_number
           , vendor_site_code
-       FROM xxaqv_fnd_atts_doc_table_stg
-	  WHERE processed_flag = 'LS'
-     	AND entity_name    = nvl(gv_entity_name,entity_name) ;
-		
-	 
-	 BEGIN
-	  xxaqv_conv_cmn_utility_pkg.print_logs('********************************** Validation Report *************************************************', 'O');
+       FROM xxaqv_attach_docs_stg
+      WHERE processed_flag = 'LS'
+        AND entity_name    = nvl(gv_entity_name,entity_name) ;
+        
+     
+     BEGIN
+      xxaqv_conv_cmn_utility_pkg.print_logs('********************************** Validation Report *************************************************', 'O');
       xxaqv_conv_cmn_utility_pkg.print_logs(   ''   , 'O');      
-	  xxaqv_conv_cmn_utility_pkg.print_logs(rpad(   'Date:'   , 30)|| rpad(   sysdate   , 30), 'O');
+      xxaqv_conv_cmn_utility_pkg.print_logs(rpad(   'Date:'   , 30)|| rpad(   sysdate   , 30), 'O');
       xxaqv_conv_cmn_utility_pkg.print_logs(   ''   , 'O');
       xxaqv_conv_cmn_utility_pkg.print_logs('******************************************************************************************************', 'O');
       IF gv_debug_flag = 'YES' THEN
@@ -1131,23 +1237,23 @@ CREATE OR REPLACE PACKAGE BODY xxaqv_fnd_attachments_pkg AS
          xxaqv_conv_cmn_utility_pkg.print_logs('******************************************************************************************************'
          );
       END IF;
-	  
-	  FOR r_lcu_attch IN lcu_attach
-	  LOOP
-	     ln_error_msg   := '';   -- Resetting error message after every invoice
+      
+      FOR r_lcu_attch IN lcu_attach
+      LOOP
+         ln_error_msg   := '';   -- Resetting error message after every invoice
          l_val_flag     := 'Y';  -- Resetting Flag Value after every invoice
-		 ln_pk1_value   := '';   -- Resetting the PK1_VALUE
-		 
-		 -- category name validation
-		  IF gv_debug_flag = 'YES' 
-		  THEN
+         ln_pk1_value   := '';   -- Resetting the PK1_VALUE
+         
+         -- category name validation
+          IF gv_debug_flag = 'YES' 
+          THEN
             xxaqv_conv_cmn_utility_pkg.print_logs('Validating category id');
          END IF;
-		  l_val_status   := validate_category_id(r_lcu_attch.category_name,lv_category_id,lv_error_msg);
-		  IF l_val_status = 'E' 
-		  THEN
+          l_val_status   := validate_category_id(r_lcu_attch.category_name,lv_category_id,lv_error_msg);
+          IF l_val_status = 'E' 
+          THEN
             IF gv_debug_flag = 'YES' 
-			THEN
+            THEN
                xxaqv_conv_cmn_utility_pkg.print_logs('Validation of category id failed');
             END IF;
             l_val_flag     := 'N';
@@ -1156,21 +1262,21 @@ CREATE OR REPLACE PACKAGE BODY xxaqv_fnd_attachments_pkg AS
                             || lv_error_msg;
          ELSE
             IF gv_debug_flag = 'YES' 
-			THEN
+            THEN
                xxaqv_conv_cmn_utility_pkg.print_logs('Validation of category id Suceeded');
             END IF;
          END IF;
-		 
-		  -- datatype name validation
-		  IF gv_debug_flag = 'YES' 
-		  THEN
+         
+          -- datatype name validation
+          IF gv_debug_flag = 'YES' 
+          THEN
             xxaqv_conv_cmn_utility_pkg.print_logs('Validating datatype id');
          END IF;
-		  l_val_status   := validate_datatype_id(r_lcu_attch.datatype_name,lv_datatype_id,lv_error_msg);
-		  IF l_val_status = 'E' 
-		  THEN
+          l_val_status   := validate_datatype_id(r_lcu_attch.datatype_name,lv_datatype_id,lv_error_msg);
+          IF l_val_status = 'E' 
+          THEN
               IF gv_debug_flag = 'YES' 
-			  THEN
+              THEN
                  xxaqv_conv_cmn_utility_pkg.print_logs('Validation of datatype id failed');
               END IF;
             l_val_flag     := 'N';
@@ -1179,122 +1285,118 @@ CREATE OR REPLACE PACKAGE BODY xxaqv_fnd_attachments_pkg AS
                             || lv_error_msg;
           ELSE
             IF gv_debug_flag = 'YES' 
-			THEN
+            THEN
                xxaqv_conv_cmn_utility_pkg.print_logs('Validation of datatype id Suceeded');
             END IF;
          END IF;
-		 
+         
 -----------------------------------------------------------------------------------------PK1_VALUE VALIDATION-------------------------------------------------------------------------------------------------------------	 
-		 
-		 IF gv_entity_name = 'PO_VENDORS'
-		 THEN
-		 -- PK1 value validation for suppliers
-		  IF gv_debug_flag = 'YES' 
-		  THEN
+         
+         IF gv_entity_name = 'PO_VENDORS'
+         THEN
+         -- PK1 value validation for suppliers
+          /*IF gv_debug_flag = 'YES' 
+          THEN
             xxaqv_conv_cmn_utility_pkg.print_logs('Validating pk1_value for supplier');
-         END IF;
-		  l_val_status   := validate_supplier_pk(r_lcu_attch.vendor_number,r_lcu_attch.vendor_name,ln_pk1_value,lv_error_msg);
-		  IF l_val_status = 'E' 
-		  THEN
+         END IF;*/
+          l_val_status   := validate_supplier_pk(r_lcu_attch.vendor_number,r_lcu_attch.vendor_name,ln_pk1_value,lv_error_msg);
+          IF l_val_status = 'E' 
+          THEN
               IF gv_debug_flag = 'YES' 
-			  THEN
-                 xxaqv_conv_cmn_utility_pkg.print_logs('Validation of pk1_value failed for suppliers');
+              THEN
+                 xxaqv_conv_cmn_utility_pkg.print_logs('Validation of pk1_value failed for suppliers  ' || r_lcu_attch.vendor_number||'  '||r_lcu_attch.vendor_name);
               END IF;
             l_val_flag     := 'N';
             ln_error_msg   := ln_error_msg
                             || '~'
                             || lv_error_msg;
-          ELSE
+         /* ELSE
             IF gv_debug_flag = 'YES' 
-			THEN
-               xxaqv_conv_cmn_utility_pkg.print_logs('Validation of pk1_value Suceeded for suppliers');
-            END IF;
-         END IF;
-		 END IF;
-		 
-		  IF gv_entity_name = 'PO_VENDOR_SITES'
-		 THEN
-		 -- PK1 value validation for supplier sites
-		  IF gv_debug_flag = 'YES' 
-		  THEN
-            xxaqv_conv_cmn_utility_pkg.print_logs('Validating pk1_value for supplier sites');
-         END IF;
-		  l_val_status   := validate_sup_sites_pk(r_lcu_attch.vendor_number,r_lcu_attch.vendor_site_code,ln_pk1_value,lv_error_msg);
-		  IF l_val_status = 'E' 
-		  THEN
-              IF gv_debug_flag = 'YES' 
-			  THEN
-                 xxaqv_conv_cmn_utility_pkg.print_logs('Validation of pk1_value failed for supplier sites');
-              END IF;
-            l_val_flag     := 'N';
-            ln_error_msg   := ln_error_msg
-                            || '~'
-                            || lv_error_msg;
-          ELSE
-            IF gv_debug_flag = 'YES' 
-			THEN
-               xxaqv_conv_cmn_utility_pkg.print_logs('Validation of pk1_value Suceeded for supplier sites');
-            END IF;
-         END IF;
-		 END IF;
-		 
-		 
-----------------------------------------------------------------------------------------------------UPDATING THE STAGING TABLE WITH VALIDATED DATA-----------------------------------------------------------------------------		 
-		 --UPDATING THE VALIDATED RECORDS
-		 IF l_val_flag = 'N' and ln_mstr_flag ='Y'
             THEN
-            ln_mstr_flag := 'N';
-            END IF;
-		 IF ln_mstr_flag = 'N' 
-		 THEN	
-		 UPDATE xxaqv_fnd_atts_doc_table_stg
-		    SET processed_flag   = 'VE'
-			  , error_msg        = ln_error_msg
-			  , category_id      = lv_category_id
-			  , datatype_id      = lv_datatype_id
-			  , pk1_value        = ln_pk1_value
-			  , created_by       = gn_created_by
+               xxaqv_conv_cmn_utility_pkg.print_logs('Validation of pk1_value Suceeded for suppliers');
+            END IF;*/
+         END IF;
+         END IF;
+         
+          IF gv_entity_name = 'PO_VENDOR_SITES'
+         THEN
+         -- PK1 value validation for supplier sites
+          /*IF gv_debug_flag = 'YES' 
+          THEN
+            xxaqv_conv_cmn_utility_pkg.print_logs('Validating pk1_value for supplier sites');
+         END IF;*/
+          l_val_status   := validate_sup_sites_pk(r_lcu_attch.vendor_number,r_lcu_attch.vendor_site_code,ln_pk1_value,lv_error_msg);
+          IF l_val_status = 'E' 
+          THEN
+              IF gv_debug_flag = 'YES' 
+              THEN
+                 xxaqv_conv_cmn_utility_pkg.print_logs('Validation of pk1_value failed for supplier sites  '  || r_lcu_attch.vendor_number||'  '||r_lcu_attch.vendor_site_code);
+              END IF;
+            l_val_flag     := 'N';
+            ln_error_msg   := ln_error_msg
+                            || '~'
+                            || lv_error_msg;
+          /*ELSE
+            IF gv_debug_flag = 'YES' 
+            THEN
+               xxaqv_conv_cmn_utility_pkg.print_logs('Validation of pk1_value Suceeded for supplier sites');
+            END IF;*/
+         END IF;
+         END IF;
+         
+         
+------------------------------------------------------------------------------------------------UPDATING THE STAGING TABLE WITH VALIDATED DATA-----------------------------------------------------------------------------		 
+         --UPDATING THE VALIDATED RECORDS
+         IF l_val_flag = 'N' 
+         THEN	
+         UPDATE xxaqv_attach_docs_stg
+            SET processed_flag   = 'VE'
+              , error_msg        = ln_error_msg
+              , category_id      = lv_category_id
+              , datatype_id      = lv_datatype_id
+              , pk1_value        = ln_pk1_value
+              , created_by       = gn_created_by
               , creation_date    = sysdate
               , last_updated_by  = gn_created_by
               , last_update_date = sysdate
-		  WHERE rowid            = r_lcu_attch.rowid;
-		 COMMIT;
-		 IF gv_debug_flag = 'YES' THEN
+          WHERE rowid            = r_lcu_attch.rowid;
+         COMMIT;
+         IF gv_debug_flag = 'YES' THEN
                xxaqv_conv_cmn_utility_pkg.print_logs('Staging Table Updating:record is erronous');
             END IF;
-		 
-		 ELSE
-		 
-		 UPDATE xxaqv_fnd_atts_doc_table_stg
-		    SET processed_flag   = 'VS'
-			  , error_msg        = ln_error_msg
-			  , category_id      = lv_category_id
-			  , datatype_id      = lv_datatype_id
-			  , pk1_value        = ln_pk1_value
-			  , created_by       = gn_created_by
+         
+         ELSE
+         
+         UPDATE xxaqv_attach_docs_stg
+            SET processed_flag   = 'VS'
+              , error_msg        = ln_error_msg
+              , category_id      = lv_category_id
+              , datatype_id      = lv_datatype_id
+              , pk1_value        = ln_pk1_value
+              , created_by       = gn_created_by
               , creation_date    = sysdate
               , last_updated_by  = gn_created_by
               , last_update_date = sysdate
-		  WHERE rowid            = r_lcu_attch.rowid;
-		  
-		 COMMIT;
-		 IF gv_debug_flag = 'YES' 
-		 THEN
-		  xxaqv_conv_cmn_utility_pkg.print_logs('Staging Table Updated with valid records');
+          WHERE rowid            = r_lcu_attch.rowid;
+          
+         COMMIT;
+         IF gv_debug_flag = 'YES' 
+         THEN
+          xxaqv_conv_cmn_utility_pkg.print_logs('Staging Table Updated with valid records');
             END IF;
-		 END IF;
-	  END LOOP;
-	  
-	  
-	  BEGIN
+         END IF;
+      END LOOP;
+      
+      
+      BEGIN
          SELECT COUNT(processed_flag)
            INTO ln_failed_invoice
-           FROM xxaqv_fnd_atts_doc_table_stg
+           FROM xxaqv_attach_docs_stg
           WHERE processed_flag = 'VE';
 
          SELECT COUNT(processed_flag)
            INTO ln_success_invoice
-           FROM xxaqv_fnd_atts_doc_table_stg
+           FROM xxaqv_attach_docs_stg
           WHERE processed_flag = 'VS';
 
          xxaqv_conv_cmn_utility_pkg.print_logs('NUMBER OF RECORDS FAILED IN VALIDATION =' || ln_failed_invoice, 'O' );
@@ -1309,9 +1411,9 @@ CREATE OR REPLACE PACKAGE BODY xxaqv_fnd_attachments_pkg AS
             x_err_msg   := 'Unexpeected error occured while vaidating staging records during validation success ratio count';
             x_retcode   := 1;
       END;
-	  EXCEPTION
+      EXCEPTION
       WHEN OTHERS 
-	  THEN
+      THEN
          xxaqv_conv_cmn_utility_pkg.print_logs('validating error for staging table encountered'
                                                || to_char(sqlcode)
                                                || '-'
@@ -1319,8 +1421,81 @@ CREATE OR REPLACE PACKAGE BODY xxaqv_fnd_attachments_pkg AS
 
          x_err_msg   := 'Unexpeected error occured while vaidating staging records';
          x_retcode   := 1;
-	 END validate_staging_records;
-	 
+     END validate_staging_records;
+
+--/****************************************************************************************************************
+-- * Procedure  : populate_fnd_lobs                                                                               *
+-- * Purpose    : This Procedure is used to populate fnd_lobs                                                     *
+-- ****************************************************************************************************************/  
+
+   PROCEDURE populate_fnd_lobs ( x_retcode       OUT   NUMBER
+                               , x_err_msg       OUT   VARCHAR2
+   ) IS
+   
+   CURSOR pop_fnd_lobs 
+   IS
+   SELECT file_name
+        , file_content_type
+        , file_data
+        , upload_date
+        , expiration_date
+        , program_name
+        , program_tag
+        , language
+        , oracle_charset
+        , file_format
+		, pk1_value
+     FROM xxaqv_attach_docs_stg
+	WHERE entity_name   = gv_entity_name
+      AND datatype_name = 'FILE'
+	  FOR UPDATE OF file_id;
+   
+   BEGIN
+   
+       FOR r_populate_lobs IN pop_fnd_lobs
+	   LOOP 
+       INSERT INTO fnd_lobs ( file_id
+                            , file_name
+                            , file_content_type
+                            , file_data
+                            , upload_date
+                            , expiration_date
+                            , program_name
+                            , program_tag
+                            , language
+                            , oracle_charset
+                            , file_format    )
+                       VALUES (
+					        fnd_lobs_s.nextval
+						   , r_populate_lobs.file_name	
+						   , r_populate_lobs.file_content_type	
+						   , r_populate_lobs.file_data	
+						   , r_populate_lobs.upload_date	
+						   , r_populate_lobs.expiration_date	
+						   , r_populate_lobs.program_name	
+						   , r_populate_lobs.program_tag	
+						   , r_populate_lobs.language	
+						   , r_populate_lobs.oracle_charset	
+						   , r_populate_lobs.file_format	
+					   );
+					   
+		UPDATE xxaqv_attach_docs_stg
+		   SET file_id = fnd_lobs_s.currval
+		WHERE current of pop_fnd_lobs;
+
+		  
+		  COMMIT;
+		  
+		END LOOP;
+		
+    EXCEPTION
+      WHEN OTHERS THEN
+         x_err_msg := x_err_msg
+                      || to_char(sqlcode)
+                      || '-'
+                      || sqlerrm;
+         x_retcode   := 1;
+  END populate_fnd_lobs;   
 --/****************************************************************************************************************
 -- * Procedure  : IMPORT_STAGING_DATA                                                                             *
 -- * Purpose    : This Procedure is used to valdate the data in Staging Table                                     *
@@ -1333,38 +1508,39 @@ CREATE OR REPLACE PACKAGE BODY xxaqv_fnd_attachments_pkg AS
     
       CURSOR cur_select IS
       SELECT pk1_value   
-	      , entity_name                
-	      , seq_num                    
-	      , title                      
-	      , category_name              
-	      , category_id                
-	      , datatype_id                
-	      , datatype_name              
-	      , document_description       
-	      , text                       
-	      , url                        
-	      , file_name                  
-	      , record_id                  
-	      , creation_date              
-	      , last_update_date           
-	      , last_update_login          
-	      , last_updated_by            
-	      , created_by                 
-	      , processed_flag             
-	      , error_msg                  
-	      , document_id                
-	      , media_id    
-		  , pk2_value                
-		  , pk3_value               
-		  , pk4_value               
-		  , pk5_value 
-       FROM xxaqv_fnd_atts_doc_table_stg
-	  WHERE processed_flag = 'VS'
-     	AND entity_name    = nvl(gv_entity_name,entity_name) ;
+          , entity_name                
+          , seq_num                    
+          , title                      
+          , category_name              
+          , category_id                
+          , datatype_id                
+          , datatype_name              
+          , document_description       
+          , text                       
+          , url                        
+          , file_name                  
+          , record_id                  
+          , creation_date              
+          , last_update_date           
+          , last_update_login          
+          , last_updated_by            
+          , created_by                 
+          , processed_flag             
+          , error_msg                  
+          , document_id                
+          , media_id    
+          , pk2_value                
+          , pk3_value               
+          , pk4_value               
+          , pk5_value 
+          , file_id
+       FROM xxaqv_attach_docs_stg
+      WHERE processed_flag = 'VS'
+        AND entity_name    = nvl(gv_entity_name,entity_name) ;
 
    BEGIN
       FOR lcu_r_cur_select IN cur_select 
-	  LOOP                                                     ----Calling WEB API
+      LOOP                                                     ----Calling WEB API
          fnd_webattch.add_attachment( seq_num                => lcu_r_cur_select.seq_num
                                     , category_id            => lcu_r_cur_select.category_id          --category_id
                                     , document_description   => lcu_r_cur_select.document_description --description
@@ -1379,7 +1555,7 @@ CREATE OR REPLACE PACKAGE BODY xxaqv_fnd_attachments_pkg AS
                                     , pk3_value              => lcu_r_cur_select.pk3_value
                                     , pk4_value              => lcu_r_cur_select.pk4_value
                                     , pk5_value              => lcu_r_cur_select.pk5_value
-                                    , media_id               => NULL
+                                    , media_id               => lcu_r_cur_select.file_id
                                     , user_id                => gv_user_id
          );
       END LOOP;
@@ -1398,32 +1574,32 @@ CREATE OR REPLACE PACKAGE BODY xxaqv_fnd_attachments_pkg AS
       ln_count            NUMBER;
       lv_processed_flag   VARCHAR2(2);
       ln_entity_name      VARCHAR2(100);
-	  ln_pk1_value        VARCHAR2(100);
-	  
-   BEGIN
+      ln_pk1_value        VARCHAR2(100);
+      
+    BEGIN
       xxaqv_conv_cmn_utility_pkg.print_logs('**************************** Attachment Import Report *******************************','O');
-      xxaqv_conv_cmn_utility_pkg.print_logs( '' , 'O');
+      xxaqv_conv_cmn_utility_pkg.print_logs('' , 'O');
       xxaqv_conv_cmn_utility_pkg.print_logs(rpad( 'Date:',30)||rpad(sysdate,30) ,'O');
       xxaqv_conv_cmn_utility_pkg.print_logs( ''  , 'O');
       xxaqv_conv_cmn_utility_pkg.print_logs('***********************************************************************************' ,'O' );
       IF gv_debug_flag = 'YES' 
-	  THEN
+      THEN
          xxaqv_conv_cmn_utility_pkg.print_logs('TIE_BACK_STAGING: Update staging tables with success records and tie back oracle data.');
       END IF;
       xxaqv_conv_cmn_utility_pkg.print_logs('TIE_BACK_STAGING: Tie back oracle data for Attachments');
       FOR i IN (
          SELECT entity_name
               , pk1_value
-           FROM xxaqv_fnd_atts_doc_table_stg
+           FROM xxaqv_attach_docs_stg
           WHERE processed_flag = 'IS'
       ) LOOP
          BEGIN
             ln_entity_name       := NULL;
-			ln_pk1_value         := NULL;			
+            ln_pk1_value         := NULL;
             SELECT entity_name
                  , pk1_value
               INTO ln_entity_name
-			     , ln_pk1_value  
+                 , ln_pk1_value  
               FROM fnd_attached_documents
              WHERE entity_name = i.entity_name
                AND pk1_value   = i.pk1_value;
@@ -1435,7 +1611,7 @@ CREATE OR REPLACE PACKAGE BODY xxaqv_fnd_attachments_pkg AS
          END;
 
          BEGIN
-            UPDATE xxaqv_fnd_atts_doc_table_stg
+            UPDATE xxaqv_attach_docs_stg
                SET processed_flag  = lv_processed_flag
              WHERE entity_name     = i.entity_name
                AND pk1_value       = i.pk1_value
@@ -1464,11 +1640,11 @@ CREATE OR REPLACE PACKAGE BODY xxaqv_fnd_attachments_pkg AS
 
       FOR j IN (
          SELECT xfadts.entity_name
-		      , xfadts.pk1_value
-           FROM xxaqv_fnd_atts_doc_table_stg   xfadts
+              , xfadts.pk1_value
+           FROM xxaqv_attach_docs_stg   xfadts
           WHERE xfadts.processed_flag = 'PS'
       ) LOOP 
-	  xxaqv_conv_cmn_utility_pkg.print_logs( rpad('entity_name', 30 ) || rpad('pk1_value', 30 ) , 'O');
+      xxaqv_conv_cmn_utility_pkg.print_logs( rpad('entity_name', 30 ) || rpad('pk1_value', 30 ) , 'O');
       END LOOP;
 
       xxaqv_conv_cmn_utility_pkg.print_logs('', 'O');
@@ -1495,13 +1671,13 @@ PROCEDURE main( errbuf          OUT   VARCHAR2
               , p_conv_mode     IN    VARCHAR2
               , p_debug_flag    IN    VARCHAR2
               , p_entity_name   IN    VARCHAR2
-			  , p_pk1_value     IN    VARCHAR2
+              , p_pk1_value     IN    VARCHAR2
    ) IS
-   
+    
     lv_error_msg    VARCHAR2(4000) := NULL;
     l_retcode       NUMBER;
     
-	BEGIN      
+    BEGIN      
     IF p_debug_flag IS NULL 
     THEN
          gv_debug_flag := NULL;
@@ -1515,72 +1691,87 @@ PROCEDURE main( errbuf          OUT   VARCHAR2
     ELSE
          gv_entity_name := p_entity_name;
     END IF;
-	
-	IF p_pk1_value IS NULL 
+    
+    IF p_pk1_value IS NULL 
     THEN
          gv_pk1_value := NULL;
     ELSE
          gv_pk1_value := p_pk1_value;
     END IF;
-
+    
     IF p_conv_mode = 'LOAD' 
     THEN
-	   IF gv_debug_flag = 'YES' 
+       IF gv_debug_flag = 'YES' 
              THEN
                 xxaqv_conv_cmn_utility_pkg.print_logs(' EXTRACTING DATA AND LOADING INTO THE STAGING TABLE');
                 xxaqv_conv_cmn_utility_pkg.print_logs(' Conversion Mode : ' || p_conv_mode);
-	    		xxaqv_conv_cmn_utility_pkg.print_logs(' Entity Name : '     || gv_entity_name);
+                xxaqv_conv_cmn_utility_pkg.print_logs(' Entity Name : '     || gv_entity_name);
              END IF;
-	    IF gv_entity_name = 'PO_VENDORS'
-	    THEN
-
+        IF gv_entity_name = 'PO_VENDORS'
+        THEN
+    
             supplier_load_staging_data( x_retcode     => l_retcode
                                       , x_err_msg     => lv_error_msg   );
-	  
-		ELSIF gv_entity_name = 'PO_VENDOR_SITES'
-	    THEN
-
+      
+        ELSIF gv_entity_name = 'PO_VENDOR_SITES'
+        THEN
+    
             sup_sites_load_staging( x_retcode     => l_retcode
                                   , x_err_msg     => lv_error_msg   );
-	    END IF;
-		
-		
+        END IF;
+        
+        
    
-	ELSIF p_conv_mode = 'VALIDATE' THEN
+    ELSIF p_conv_mode = 'VALIDATE' THEN
          IF gv_debug_flag = 'YES' 
-		 THEN
+         THEN
             xxaqv_conv_cmn_utility_pkg.print_logs('VALIDATING RECORDS IN THE STAGING TABLE');
             xxaqv_conv_cmn_utility_pkg.print_logs(' Conversion Mode : ' || p_conv_mode);
-			xxaqv_conv_cmn_utility_pkg.print_logs(' Entity Name : '     || gv_entity_name);
+            xxaqv_conv_cmn_utility_pkg.print_logs(' Entity Name : '     || gv_entity_name);
          END IF;
-
+        
          validate_staging_records( x_retcode       => l_retcode
                                  , x_err_msg       => lv_error_msg );
+        
 		
-		
-		ELSIF p_conv_mode = 'IMPORT' THEN
+		ELSIF p_conv_mode = 'POPULATE_BLOB' THEN
          IF gv_debug_flag = 'YES' 
-		 THEN
+         THEN
             xxaqv_conv_cmn_utility_pkg.print_logs('VALIDATING RECORDS IN THE STAGING TABLE');
             xxaqv_conv_cmn_utility_pkg.print_logs(' Conversion Mode : ' || p_conv_mode);
-			xxaqv_conv_cmn_utility_pkg.print_logs(' Entity Name : '     || gv_entity_name);
+            xxaqv_conv_cmn_utility_pkg.print_logs(' Entity Name : '     || gv_entity_name);
          END IF;
-
+        
+         populate_fnd_lobs ( x_retcode       => l_retcode
+                           , x_err_msg       => lv_error_msg ); 
+							 
+        ELSIF p_conv_mode = 'IMPORT' THEN
+         IF gv_debug_flag = 'YES' 
+         THEN
+            xxaqv_conv_cmn_utility_pkg.print_logs('VALIDATING RECORDS IN THE STAGING TABLE');
+            xxaqv_conv_cmn_utility_pkg.print_logs(' Conversion Mode : ' || p_conv_mode);
+            xxaqv_conv_cmn_utility_pkg.print_logs(' Entity Name : '     || gv_entity_name);
+         END IF;
+        
          import_staging_data ( x_retcode       => l_retcode
                              , x_err_msg       => lv_error_msg );
-							 
+        
+	
         ELSIF p_conv_mode = 'TIEBACK' 
-		THEN
-		IF gv_debug_flag = 'YES' 
-		 THEN
+        THEN
+        IF gv_debug_flag = 'YES' 
+         THEN
             xxaqv_conv_cmn_utility_pkg.print_logs('VALIDATING RECORDS IN THE STAGING TABLE');
             xxaqv_conv_cmn_utility_pkg.print_logs(' Conversion Mode : ' || p_conv_mode);
-			xxaqv_conv_cmn_utility_pkg.print_logs(' Entity Name : '     || gv_entity_name);
+            xxaqv_conv_cmn_utility_pkg.print_logs(' Entity Name : '     || gv_entity_name);
          END IF;
-		 tie_back_staging ( x_retcode   => l_retcode
+         tie_back_staging ( x_retcode   => l_retcode
                           , x_err_msg   => lv_error_msg );
       END IF;
-	  EXCEPTION
+	  
+	    errbuf := lv_error_msg;
+        retcode := l_retcode;
+      EXCEPTION
       WHEN OTHERS THEN
          xxaqv_conv_cmn_utility_pkg.print_logs('Program Error'
                                                || p_conv_mode
@@ -1588,11 +1779,12 @@ PROCEDURE main( errbuf          OUT   VARCHAR2
                                                || '-'
                                                || sqlerrm);
 
-         lv_error_msg := lv_error_msg
+                 errbuf := lv_error_msg
                          || to_char(sqlcode)
                          || '-'
                          || sqlerrm;
-	END main;					 
+				retcode := 1;		 
+    END main;
 END xxaqv_fnd_attachments_pkg;
 
 

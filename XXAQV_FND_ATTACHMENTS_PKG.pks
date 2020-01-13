@@ -40,8 +40,8 @@ CREATE OR REPLACE PACKAGE xxaqv_fnd_attachments_pkg AS
 -- * Purpose   : This Function will validate PK1_VALUE for supplier                                                *
 -- *****************************************************************************************************************/	
 
-   FUNCTION validate_supplier_pk ( p_vendor_name    IN    VARCHAR2
-                                 , p_vendor_number  IN    VARCHAR2
+   FUNCTION validate_supplier_pk ( p_vendor_number  IN    VARCHAR2
+                                 , p_vendor_name    IN    VARCHAR2
                                  , ln_pk1_value     OUT   VARCHAR2
                                  , p_error_msg      OUT   VARCHAR2
    ) RETURN VARCHAR2;
@@ -65,12 +65,13 @@ CREATE OR REPLACE PACKAGE xxaqv_fnd_attachments_pkg AS
                                         , x_err_msg       OUT   VARCHAR2  );
                                
 --/****************************************************************************************************************
--- * Procedure  : sup_sites_load_staging                                                                *
+-- * Procedure  : sup_sites_load_staging                                                                          *
 -- * Purpose    : This Procedure is used to load the supplier site attachment data into staging Table             *
 -- ****************************************************************************************************************/
 
    PROCEDURE sup_sites_load_staging ( x_retcode       OUT   NUMBER
                                     , x_err_msg       OUT   VARCHAR2  );   
+                                    
 --/****************************************************************************************************************
 -- * Procedure : validate_staging_records                                                                         *
 -- * Purpose   : This Procedure validate the records in the staging table.                                        *
@@ -78,6 +79,16 @@ CREATE OR REPLACE PACKAGE xxaqv_fnd_attachments_pkg AS
 
    PROCEDURE validate_staging_records ( x_retcode       OUT   VARCHAR2
                                       , x_err_msg       OUT   VARCHAR2 )   ;
+                                      
+--/****************************************************************************************************************
+-- * Procedure  : populate_fnd_lobs                                                                               *
+-- * Purpose    : This Procedure is used to populate fnd_lobs                                                     *
+-- ****************************************************************************************************************/  
+
+   PROCEDURE populate_fnd_lobs ( x_retcode       OUT   NUMBER
+                               , x_err_msg       OUT   VARCHAR2
+   );
+   
 --/****************************************************************************************************************
 -- * Procedure  : IMPORT_STAGING_DATA                                                                             *
 -- * Purpose    : This Procedure is used to valdate the data in Staging Table                                     *
