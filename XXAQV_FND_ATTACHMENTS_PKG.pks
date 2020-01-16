@@ -55,7 +55,41 @@ CREATE OR REPLACE PACKAGE xxaqv_fnd_attachments_pkg AS
                                   , p_vendor_site_code    IN    VARCHAR2
                                   , ln_pk1_value          OUT   VARCHAR2
                                   , p_error_msg           OUT   VARCHAR2
-   ) RETURN VARCHAR2;   
+   ) RETURN VARCHAR2; 
+
+--/*****************************************************************************************************************
+-- * Function  : validate_ap_invoices_pk                                                                           *
+-- * Purpose   : This Function will validate PK1_VALUE for AP_INVOICES                                             *
+-- *****************************************************************************************************************/	
+
+   FUNCTION validate_ap_invoices_pk ( p_vendor_number       IN    VARCHAR2
+                                    , p_vendor_name         IN    VARCHAR2
+                                    , p_invoice_number      IN    VARCHAR2
+                                    , p_vendor_site_code    IN    VARCHAR2
+                                    , ln_pk1_value          OUT   VARCHAR2
+                                    , p_error_msg           OUT   VARCHAR2
+   ) RETURN VARCHAR2 ; 
+
+--/*****************************************************************************************************************
+-- * Function  : validate_ar_inv_pk                                                                                *
+-- * Purpose   : This Function will validate ar_invoice pk1_value                                                  *
+-- *****************************************************************************************************************/	
+
+   FUNCTION validate_ar_inv_pk ( p_trx_number   IN    VARCHAR2
+                               , ln_pk1_value   OUT   VARCHAR2
+                               , p_error_msg    OUT   VARCHAR2
+   ) RETURN VARCHAR2 ;
+
+--/*****************************************************************************************************************
+-- * Function  : validate_ar_customers_pk                                                                          *
+-- * Purpose   : This Function will validate ar_invoice pk1_value                                                  *
+-- *****************************************************************************************************************/	
+
+   FUNCTION validate_ar_customers_pk ( p_customer_number IN    VARCHAR2
+                                     , ln_pk1_value      OUT   VARCHAR2
+                                     , p_error_msg       OUT   VARCHAR2
+   ) RETURN VARCHAR2 ;
+   
 --/****************************************************************************************************************
 -- * Procedure  : supplier_load_staging_data                                                                      *
 -- * Purpose    : This Procedure is used to load supplier attachment data into staging Table                      *

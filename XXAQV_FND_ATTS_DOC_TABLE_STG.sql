@@ -52,6 +52,8 @@ CREATE TABLE xxaqv.xxaqv_attach_docs_stg ( pk1_value                  VARCHAR2(5
                                          , upload_date                DATE
                                          , expiration_date            DATE
                                          , language                   VARCHAR2(50)
+										 , trx_number                 VARCHAR2(50)
+										 , customer_number            VARCHAR2(50)
                                           );
 
 EXEC ad_zd_table.upgrade('XXAQV','XXAQV_ATTACH_DOCS_STG');
